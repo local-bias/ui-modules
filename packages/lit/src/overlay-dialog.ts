@@ -3,9 +3,29 @@ import { customElement, property, state } from 'lit/decorators.js';
 import { keyed } from 'lit/directives/keyed.js';
 import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 import type { DialogController } from './controller';
-import type { AlertIcon, DialogState, QueueItem, StepItem } from './types';
+import type {
+  AlertIcon,
+  DialogState,
+  FormFieldGroup,
+  FormFieldMeta,
+  FormLayout,
+  QueueItem,
+  StepItem,
+} from './types';
 import { createInitialState } from './types';
 import { overlayStyles } from './styles';
+
+// ─── Form rendering context ───────────────────────────────────
+// Abstracts data access so form rendering methods work for both
+// 'form' and 'step-form' dialog types without code duplication.
+
+interface FormContext {
+  getValue: (key: string) => unknown;
+  getError: (key: string) => string;
+  getTouched: (key: string) => boolean;
+  onUpdate: (key: string, value: unknown) => void;
+  onBlur: (key: string) => void;
+}
 
 @customElement('overlay-dialog')
 export class OverlayDialog extends LitElement {
@@ -29,6 +49,7 @@ export class OverlayDialog extends LitElement {
       this._unsubscribe = this.controller.subscribe((s) => {
         const wasOpen = this._state.open;
         const prevDialogType = this._state.dialogType;
+        const prevStepIndex = this._state.stepFormCurrentIndex;
 
         if (s.open && !wasOpen) {
           this._isClosing = false;
@@ -44,6 +65,13 @@ export class OverlayDialog extends LitElement {
         }
 
         if (s.open && s.dialogType !== prevDialogType) {
+          this._bodyKey++;
+        } else if (
+          s.open &&
+          s.dialogType === 'step-form' &&
+          s.stepFormCurrentIndex !== prevStepIndex
+        ) {
+          // re-animate body when navigating between steps
           this._bodyKey++;
         }
 
@@ -309,6 +337,230 @@ export class OverlayDialog extends LitElement {
     `;
   }
 
+  // ─── Form Helpers ────────────────────────────────────────
+
+  private _createFormContext(): FormContext {
+    const s = this._state;
+    return {
+      getValue: (k) => s.formValues[k],
+      getError: (k) => s.formErrors[k] ?? '',
+      getTouched: (k) => !!s.formTouched[k],
+      onUpdate: (k, v) => this.controller.updateFormField(k, v),
+      onBlur: (k) => this.controller.touchFormField(k),
+    };
+  }
+
+  private _createStepFormContext(): FormContext {
+    const s = this._state;
+    const step = s.stepFormSteps[s.stepFormCurrentIndex];
+    return {
+      getValue: (k) => step?.values[k],
+      getError: (k) => step?.errors[k] ?? '',
+      getTouched: (k) => !!step?.touched[k],
+      onUpdate: (k, v) => this.controller.updateStepFormField(k, v),
+      onBlur: (k) => this.controller.touchStepFormField(k),
+    };
+  }
+
+  private _getOrderedFields(fields: FormFieldMeta[], layout: FormLayout): FormFieldMeta[] {
+    const order = layout.fieldOrder;
+    if (!order?.length) return fields;
+
+    const fieldMap = new Map(fields.map((f) => [f.key, f]));
+    const ordered: FormFieldMeta[] = [];
+    for (const key of order) {
+      const f = fieldMap.get(key);
+      if (f) {
+        ordered.push(f);
+        fieldMap.delete(key);
+      }
+    }
+    for (const f of fieldMap.values()) {
+      ordered.push(f);
+    }
+    return ordered;
+  }
+
+  private _renderFormGrid(
+    fields: FormFieldMeta[],
+    columns: number,
+    gap: string,
+    ctx: FormContext
+  ): TemplateResult {
+    return html`
+      <div class="form-grid" style="--dialog-form-columns:${columns}; gap:${gap}">
+        ${fields.map((f) => this._renderFormField(f, ctx))}
+      </div>
+    `;
+  }
+
+  private _renderGroupedForm(
+    allFields: FormFieldMeta[],
+    groups: FormFieldGroup[],
+    layout: FormLayout,
+    ctx: FormContext
+  ): TemplateResult {
+    const fieldMap = new Map(allFields.map((f) => [f.key, f]));
+    const usedKeys = new Set<string>();
+    const gap = layout.gap ?? '16px';
+
+    const groupFragments = groups.map((group) => {
+      const groupFields: FormFieldMeta[] = [];
+      for (const key of group.fields) {
+        const f = fieldMap.get(key);
+        if (f) {
+          groupFields.push(f);
+          usedKeys.add(key);
+        }
+      }
+      if (!groupFields.length) return nothing;
+
+      const cols = group.columns ?? layout.columns ?? 1;
+      return html`
+        <fieldset class="form-group">
+          ${group.label ? html`<legend class="form-group-label">${group.label}</legend>` : nothing}
+          ${this._renderFormGrid(groupFields, cols, gap, ctx)}
+        </fieldset>
+      `;
+    });
+
+    const remaining = allFields.filter((f) => !usedKeys.has(f.key));
+    return html`
+      ${groupFragments}
+      ${remaining.length
+        ? this._renderFormGrid(remaining, layout.columns ?? 1, gap, ctx)
+        : nothing}
+    `;
+  }
+
+  private _renderForm(
+    fields: FormFieldMeta[],
+    layout: FormLayout,
+    ctx: FormContext
+  ): TemplateResult {
+    const ordered = this._getOrderedFields(fields, layout);
+    const gap = layout.gap ?? '16px';
+
+    if (layout.groups?.length) {
+      return this._renderGroupedForm(ordered, layout.groups, layout, ctx);
+    }
+
+    return this._renderFormGrid(ordered, layout.columns ?? 1, gap, ctx);
+  }
+
+  private _renderFormField(field: FormFieldMeta, ctx: FormContext): TemplateResult {
+    const value = ctx.getValue(field.key);
+    const error = ctx.getError(field.key);
+    const touched = ctx.getTouched(field.key);
+    const showError = touched && !!error;
+
+    if (field.inputType === 'checkbox') {
+      return html`
+        <div class="form-field" data-type="checkbox" ?data-error=${showError}>
+          <label class="form-checkbox-label">
+            <input
+              type="checkbox"
+              class="form-checkbox"
+              .checked=${!!value}
+              @change=${(e: Event) =>
+                ctx.onUpdate(field.key, (e.target as HTMLInputElement).checked)}
+              @blur=${() => ctx.onBlur(field.key)}
+            />
+            <span class="form-checkbox-text">
+              ${field.label}
+              ${field.required ? html`<span class="form-required">*</span>` : nothing}
+            </span>
+          </label>
+          ${showError ? html`<span class="form-error">${error}</span>` : nothing}
+        </div>
+      `;
+    }
+
+    return html`
+      <div class="form-field" data-type=${field.inputType} ?data-error=${showError}>
+        <label class="form-label" for="form-${field.key}">
+          ${field.label} ${field.required ? html`<span class="form-required">*</span>` : nothing}
+        </label>
+        ${field.description ? html`<span class="form-hint">${field.description}</span>` : nothing}
+        ${this._renderFormInput(field, value, ctx)}
+        ${showError ? html`<span class="form-error">${error}</span>` : nothing}
+      </div>
+    `;
+  }
+
+  private _renderFormInput(
+    field: FormFieldMeta,
+    value: unknown,
+    ctx: FormContext
+  ): TemplateResult {
+    switch (field.inputType) {
+      case 'select':
+        return html`
+          <select
+            class="form-select"
+            id="form-${field.key}"
+            @change=${(e: Event) =>
+              ctx.onUpdate(field.key, (e.target as HTMLSelectElement).value)}
+            @blur=${() => ctx.onBlur(field.key)}
+          >
+            <option value="" ?selected=${!value}>選択してください</option>
+            ${field.options.map(
+              (opt) => html`<option value=${opt} ?selected=${value === opt}>${opt}</option>`
+            )}
+          </select>
+        `;
+
+      case 'number':
+        return html`
+          <input
+            type="number"
+            class="form-input"
+            id="form-${field.key}"
+            .value=${value != null ? String(value) : ''}
+            min=${field.min ?? nothing}
+            max=${field.max ?? nothing}
+            placeholder=${field.placeholder || nothing}
+            @input=${(e: Event) => {
+              const v = (e.target as HTMLInputElement).valueAsNumber;
+              ctx.onUpdate(field.key, Number.isNaN(v) ? undefined : v);
+            }}
+            @blur=${() => ctx.onBlur(field.key)}
+          />
+        `;
+
+      case 'date':
+        return html`
+          <input
+            type="date"
+            class="form-input"
+            id="form-${field.key}"
+            .value=${value != null ? String(value) : ''}
+            @input=${(e: Event) => {
+              const str = (e.target as HTMLInputElement).value;
+              ctx.onUpdate(field.key, str || undefined);
+            }}
+            @blur=${() => ctx.onBlur(field.key)}
+          />
+        `;
+
+      default:
+        return html`
+          <input
+            type=${field.inputType}
+            class="form-input"
+            id="form-${field.key}"
+            .value=${(value as string) ?? ''}
+            minlength=${field.minLength ?? nothing}
+            maxlength=${field.maxLength ?? nothing}
+            placeholder=${field.placeholder || nothing}
+            @input=${(e: Event) =>
+              ctx.onUpdate(field.key, (e.target as HTMLInputElement).value)}
+            @blur=${() => ctx.onBlur(field.key)}
+          />
+        `;
+    }
+  }
+
   private _renderButtons(): TemplateResult | typeof nothing {
     const s = this._state;
     if (!s.showConfirmButton && !s.showCancelButton) return nothing;
@@ -327,6 +579,45 @@ export class OverlayDialog extends LitElement {
           : nothing}
       </div>
     `;
+  }
+
+  // ─── Step Form Helpers ───────────────────────────────────
+
+  private _renderStepFormButtons(): TemplateResult {
+    const s = this._state;
+    const isFirst = s.stepFormCurrentIndex === 0;
+    const isLast = s.stepFormCurrentIndex === s.stepFormSteps.length - 1;
+    const submitText = isLast ? s.stepFormSubmitText : s.stepFormNextText;
+
+    return html`
+      <div class="actions actions-step-form">
+        <button class="btn btn-cancel" @click=${() => this.controller.onCancel()}>
+          ${s.cancelButtonText}
+        </button>
+        <div class="step-form-nav">
+          ${isFirst
+            ? nothing
+            : html`
+                <button class="btn btn-prev" @click=${() => this.controller.onStepPrev()}>
+                  ${s.stepFormPrevText}
+                </button>
+              `}
+          <button class="btn btn-confirm" @click=${() => this.controller.onStepNext()}>
+            ${submitText}
+          </button>
+        </div>
+      </div>
+    `;
+  }
+
+  private _deriveStepItems(): StepItem[] {
+    const s = this._state;
+    return s.stepFormSteps.map((st, i) => {
+      let status: StepItem['status'] = 'pending';
+      if (i < s.stepFormCurrentIndex) status = 'done';
+      else if (i === s.stepFormCurrentIndex) status = 'active';
+      return { key: st.key, label: st.label, status };
+    });
   }
 
   private _renderBody(): TemplateResult {
@@ -360,6 +651,45 @@ export class OverlayDialog extends LitElement {
           ${this._renderStepsList(s.steps)}
         `;
 
+      case 'form': {
+        const ctx = this._createFormContext();
+        return html`
+          ${s.title ? html`<p class="label">${s.title}</p>` : nothing}
+          ${s.description ? html`<p class="description">${s.description}</p>` : nothing}
+          <div class="form-scroll-container">
+            ${this._renderForm(s.formFields, s.formLayout, ctx)}
+          </div>
+          ${this._renderButtons()}
+        `;
+      }
+
+      case 'step-form': {
+        const stepItems = this._deriveStepItems();
+        const currentStep = s.stepFormSteps[s.stepFormCurrentIndex];
+        if (!currentStep) return html`${nothing}`;
+
+        const ctx = this._createStepFormContext();
+        const stepCount = s.stepFormSteps.length;
+        const counterText = `${s.stepFormCurrentIndex + 1} / ${stepCount}`;
+
+        return html`
+          ${this._renderStepsHeader(stepItems)}
+          <p class="step-form-counter">${counterText}</p>
+          <p class="label">${currentStep.label}</p>
+          ${currentStep.description
+            ? html`<p class="description">${currentStep.description}</p>`
+            : nothing}
+          ${currentStep.fields.length
+            ? html`
+                <div class="form-scroll-container">
+                  ${this._renderForm(currentStep.fields, currentStep.layout, ctx)}
+                </div>
+              `
+            : nothing}
+          ${this._renderStepFormButtons()}
+        `;
+      }
+
       default:
         return html`${nothing}`;
     }
@@ -367,11 +697,16 @@ export class OverlayDialog extends LitElement {
 
   override render(): TemplateResult {
     const s = this._state;
-    const showHeaderTitle = s.title && s.dialogType !== 'alert' && s.dialogType !== 'confirm';
+    const showHeaderTitle =
+      s.title &&
+      s.dialogType !== 'alert' &&
+      s.dialogType !== 'confirm' &&
+      s.dialogType !== 'form' &&
+      s.dialogType !== 'step-form';
 
     return html`
       <div class="backdrop" ?data-open=${s.open} @click=${this._onBackdropClick}>
-        <div class="card" ?data-closing=${this._isClosing}>
+        <div class="card" data-type=${s.dialogType} ?data-closing=${this._isClosing}>
           ${showHeaderTitle ? html`<p class="dialog-title">${s.title}</p>` : nothing}
           <div class="card-body">
             ${keyed(this._bodyKey, html`<div class="body-inner">${this._renderBody()}</div>`)}

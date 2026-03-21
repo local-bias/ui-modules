@@ -3,6 +3,9 @@ import type {
   AlertOptions,
   ConfirmOptions,
   DialogResult,
+  FormOptions,
+  StepFormOptions,
+  StepFormStepInput,
   TaskItemInput,
   ShowOptions,
 } from './types';
@@ -44,6 +47,42 @@ class DialogSingleton {
   confirm(optionsOrLabel: string | ConfirmOptions): Promise<boolean> {
     this.#ensureElement();
     return this.#controller.confirm(optionsOrLabel);
+  }
+
+  // ─── Form ──────────────────────────────────────────────────
+
+  form<TSchema extends { _output: unknown; safeParse: (data: unknown) => any; _def: any }>(
+    schema: TSchema,
+    options?: FormOptions<TSchema['_output']>
+  ): Promise<TSchema['_output'] | null> {
+    this.#ensureElement();
+    return this.#controller.form(schema, options);
+  }
+
+  // ─── Step Form ─────────────────────────────────────────────
+
+  showStepForm(
+    steps: StepFormStepInput[],
+    options?: StepFormOptions
+  ): Promise<Record<string, unknown> | null> {
+    this.#ensureElement();
+    return this.#controller.showStepForm(steps, options);
+  }
+
+  onStepNext(): void {
+    this.#controller.onStepNext();
+  }
+
+  onStepPrev(): void {
+    this.#controller.onStepPrev();
+  }
+
+  updateStepFormField(fieldKey: string, value: unknown): void {
+    this.#controller.updateStepFormField(fieldKey, value);
+  }
+
+  touchStepFormField(fieldKey: string): void {
+    this.#controller.touchStepFormField(fieldKey);
   }
 
   // ─── Loading helpers ─────────────────────────────────────

@@ -1,6 +1,6 @@
 {
   "name": "@konomi-app/ui",
-  "version": "5.2.1",
+  "version": "5.3.2",
   "type": "module",
   "main": "dist/index.cjs",
   "module": "dist/index.js",
@@ -27,11 +27,18 @@
     "prepare": "pnpm run build"
   },
   "peerDependencies": {
-    "lit": "^3.0.0"
+    "lit": "^3.0.0",
+    "zod": "^4.0.0"
+  },
+  "peerDependenciesMeta": {
+    "zod": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "lit": "^3.3.2",
     "tsup": "^8.5.1",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "zod": "^4.3.6"
   }
 }

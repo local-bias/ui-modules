@@ -118,6 +118,109 @@ dialog.activateStep('step1');
 dialog.completeStep('step1');
 ```
 
+### Form (Zod スキーマ連動フォーム)
+
+Zod スキーマからフォームを自動生成。バリデーション・エラー表示・レイアウトカスタマイズに対応。
+
+```ts
+import { z } from 'zod';
+
+const schema = z.object({
+  name: z.string().min(1).describe('名前'),
+  email: z.string().email().describe('メールアドレス'),
+  age: z.number().min(0).max(150).optional().describe('年齢'),
+  role: z.enum(['admin', 'editor', 'viewer']).describe('権限'),
+  active: z.boolean().default(true).describe('有効'),
+});
+
+// 基本
+const result = await dialog.form(schema, {
+  title: 'ユーザー作成',
+});
+// result: { name, email, age?, role, active } | null (キャンセル時)
+
+// レイアウト指定
+const result = await dialog.form(schema, {
+  title: '登録',
+  description: '以下の情報を入力してください',
+  layout: {
+    columns: 2,
+    groups: [
+      { label: '基本情報', fields: ['name', 'email'] },
+      { label: '設定', fields: ['role', 'active'] },
+    ],
+  },
+  defaultValues: { role: 'viewer' },
+  confirmButtonText: '作成',
+  cancelButtonText: 'やめる',
+});
+```
+
+**サポートするフィールドタイプ:**
+
+| Zod type      | Input type                                |
+| ------------- | ----------------------------------------- |
+| `z.string()`  | text (`.email()` → email, `.url()` → url) |
+| `z.number()`  | number                                    |
+| `z.boolean()` | checkbox                                  |
+| `z.enum()`    | select                                    |
+| `z.date()`    | date                                      |
+
+`.optional()`, `.default()`, `.describe()`, `.refine()` をサポート。
+
+### Step Form (ステップフォーム)
+
+各ステップに異なる Zod スキーマを持たせる、ウィザード形式のフォームダイアログ。
+
+```ts
+import { z } from 'zod';
+
+const result = await dialog.showStepForm(
+  [
+    {
+      key: 'personal',
+      label: '個人情報',
+      schema: z.object({
+        name: z.string().min(1).describe('名前'),
+        email: z.string().email().describe('メールアドレス'),
+      }),
+      layout: { columns: 2 },
+    },
+    {
+      key: 'settings',
+      label: '設定',
+      description: '権限と通知設定を選択してください',
+      schema: z.object({
+        role: z.enum(['admin', 'editor', 'viewer']).describe('権限'),
+        notifications: z.boolean().default(true).describe('通知を受け取る'),
+      }),
+    },
+    {
+      key: 'confirm',
+      label: '確認',
+      description: '入力内容を確認して送信してください。',
+      // schema 省略 → フォームなしの説明ステップ
+    },
+  ],
+  {
+    title: 'ユーザー登録',
+    nextButtonText: '次へ',
+    prevButtonText: '戻る',
+    submitButtonText: '登録',
+    cancelButtonText: 'キャンセル',
+  }
+);
+// result: { personal: { name, email }, settings: { role, notifications } } | null (キャンセル時)
+```
+
+**ナビゲーション:**
+- `次へ` — 現在ステップのバリデーションを実行。成功したら次のステップへ進む
+- `戻る` — 前のステップへ戻る (バリデーションなし)
+- `送信` (最終ステップ) — バリデーション成功後、全ステップの入力データを返す
+- `キャンセル` — `null` を返す
+
+スキーマなしのステップは、説明や確認用の静的コンテンツステップとして使用可能。
+
 ## CSS カスタマイズ
 
 `<overlay-dialog>` は CSS 変数でカスタマイズ可能:
@@ -132,6 +235,11 @@ overlay-dialog {
   --dialog-card-radius: 4px;
   --dialog-z-index: 1000;
   --dialog-spinner-size: 60px;
+  /* Form */
+  --dialog-form-width: 500px;
+  --dialog-form-columns: 1;
+  --dialog-form-gap: 16px;
+  --dialog-form-input-radius: 6px;
   /* 他多数 — src/styles.ts 参照 */
 }
 ```
