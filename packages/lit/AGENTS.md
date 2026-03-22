@@ -214,6 +214,7 @@ const result = await dialog.showStepForm(
 ```
 
 **ナビゲーション:**
+
 - `次へ` — 現在ステップのバリデーションを実行。成功したら次のステップへ進む
 - `戻る` — 前のステップへ戻る (バリデーションなし)
 - `送信` (最終ステップ) — バリデーション成功後、全ステップの入力データを返す
@@ -256,4 +257,132 @@ el.controller = ctrl;
 document.body.appendChild(el);
 
 ctrl.alert({ label: 'カスタムインスタンス' });
+```
+
+## Toast API
+
+```typescript
+import { toast } from '@konomi-app/ui';
+```
+
+### 基本
+
+```ts
+toast.success('保存しました');
+toast.error('エラーが発生しました');
+toast.warning('注意が必要です');
+toast.info('お知らせ');
+```
+
+### 詳細オプション
+
+```ts
+toast.success('保存しました', {
+  description: '変更がデータベースに反映されました',
+  duration: 5000, // 表示時間 (ms)。デフォルト: 4000。0 = 永続表示
+});
+
+// アクションボタン付き
+toast.info('ファイルを削除しました', {
+  action: {
+    label: '元に戻す',
+    onClick: () => undoDelete(),
+  },
+});
+```
+
+### 汎用
+
+```ts
+const id = toast.show({
+  type: 'info',
+  message: '処理中...',
+  description: 'しばらくお待ちください',
+  duration: 0, // 自動で消えない
+});
+```
+
+### ローディング
+
+```ts
+const id = toast.loading('アップロード中...');
+
+// 処理完了後に同じトーストを結果表示に更新
+// → loading から成功/失敗に遷移すると自動で defaultDuration のタイマーが起動
+toast.update(id, { type: 'success', message: 'アップロード完了' });
+toast.update(id, { type: 'error', message: '失敗しました', description: 'ネットワークエラー' });
+
+// タイマーを明示的に指定して遷移
+toast.update(id, { type: 'success', message: '完了', duration: 2000 });
+
+// 永続表示のまま遷移 (duration: 0)
+toast.update(id, { type: 'error', message: 'エラー', duration: 0 });
+```
+
+### プログラマティック操作
+
+```ts
+// 特定のトーストを閉じる
+toast.dismiss(id);
+
+// 全トーストを閉じる
+toast.dismissAll();
+
+// 既存トーストの内容を更新
+toast.update(id, {
+  message: '完了しました',
+  type: 'success',
+});
+```
+
+### 設定
+
+```ts
+toast.configure({
+  position: 'top-right', // 'bottom-right'(default) | 'top-left' | 'top-center' | 'bottom-right' | 'bottom-left' | 'bottom-center'
+  maxVisible: 5, // 最大同時表示数 (default: 3)
+  defaultDuration: 3000, // デフォルト表示時間 (default: 4000)
+});
+```
+
+### 機能一覧
+
+- **自動非表示**: 設定した時間後に自動で消える (プログレスバーで残り時間を表示)
+- **キュー管理**: 最大表示数を超えると古いトーストから自動で消える
+- **ホバー一時停止**: ホバー中はタイマーとプログレスバーが一時停止
+- **スムーズアニメーション**: スライドイン/アウト + 高さの自動調整
+- **レスポンシブ**: モバイルでは全幅表示
+
+## Toast CSS カスタマイズ
+
+`<toast-container>` は CSS 変数でカスタマイズ可能:
+
+```css
+toast-container {
+  --toast-z-index: 1100;
+  --toast-max-width: 420px;
+  --toast-card-bg: #fff;
+  --toast-card-radius: 8px;
+  --toast-card-shadow: 0 4px 12px rgb(0 0 0 / 0.08);
+  --toast-success: #22c55e;
+  --toast-error: #ef4444;
+  --toast-warning: #f59e0b;
+  --toast-info: #3b82f6;
+  --toast-progress-height: 3px;
+  /* 他多数 — src/toast/styles.ts 参照 */
+}
+```
+
+## 高度な使用法 (Toast)
+
+```ts
+import { ToastController, ToastContainer } from '@konomi-app/ui';
+
+// 独自インスタンス
+const ctrl = new ToastController();
+const el = document.createElement('toast-container') as ToastContainer;
+el.controller = ctrl;
+document.body.appendChild(el);
+
+ctrl.success('カスタムインスタンス');
 ```
