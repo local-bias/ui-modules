@@ -34,10 +34,14 @@ import { dialog } from '@konomi-app/ui';
 dialog.showLoading('読み込み中...');
 dialog.setProgress(50);
 dialog.setLabel('半分完了');
+dialog.setHtml('<b>処理中</b>: <span style="color:blue">ステップ1</span>');
 dialog.hide();
 
 // 外側クリックで閉じる場合は明示的に指定
 dialog.show({ type: 'loading', label: '...', allowOutsideClick: true });
+
+// HTML コンテンツを表示 (label の位置に描画)
+dialog.show({ type: 'loading', html: '<b>処理中</b>: <em>ファイルをアップロード中</em>' });
 ```
 
 ### Alert

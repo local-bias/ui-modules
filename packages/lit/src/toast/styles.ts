@@ -19,13 +19,14 @@ export const toastStyles = css`
     /* Container */
     --toast-gap: 12px;
     --toast-padding: 16px;
+    --toast-min-width: 360px;
     --toast-max-width: 420px;
 
     /* Card */
     --toast-card-bg: #fff;
     --toast-card-border: #f3f4f6;
     --toast-card-shadow: 0 4px 12px rgb(0 0 0 / 0.08), 0 1px 3px rgb(0 0 0 / 0.06);
-    --toast-card-radius: 8px;
+    --toast-card-radius: 4px;
     --toast-card-padding: 14px 16px;
 
     /* Colors (inherit from dialog when available) */
@@ -62,6 +63,7 @@ export const toastStyles = css`
     padding: var(--toast-padding);
     pointer-events: none;
     max-height: 100vh;
+    min-width: var(--toast-min-width);
     max-width: var(--toast-max-width);
     box-sizing: border-box;
   }
@@ -101,6 +103,7 @@ export const toastStyles = css`
   @media (max-width: 639px) {
     .container {
       max-width: 100%;
+      min-width: 0;
       width: 100%;
       left: 0;
       right: 0;
@@ -180,7 +183,6 @@ export const toastStyles = css`
 
   .toast-card {
     background: var(--toast-card-bg);
-    border: 1px solid var(--toast-card-border);
     border-radius: var(--toast-card-radius);
     box-shadow: var(--toast-card-shadow);
     position: relative;
@@ -193,21 +195,29 @@ export const toastStyles = css`
     pointer-events: none;
   }
 
-  /* Type-based left accent */
-  .toast-card[data-type='success'] {
-    border-left: 3px solid var(--toast-success);
+  /* Type-based top stripe */
+  .toast-card::before {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 2px;
   }
-  .toast-card[data-type='error'] {
-    border-left: 3px solid var(--toast-error);
+  .toast-card[data-type='success']::before {
+    background: var(--toast-success);
   }
-  .toast-card[data-type='warning'] {
-    border-left: 3px solid var(--toast-warning);
+  .toast-card[data-type='error']::before {
+    background: var(--toast-error);
   }
-  .toast-card[data-type='info'] {
-    border-left: 3px solid var(--toast-info);
+  .toast-card[data-type='warning']::before {
+    background: var(--toast-warning);
   }
-  .toast-card[data-type='loading'] {
-    border-left: 3px solid var(--toast-loading);
+  .toast-card[data-type='info']::before {
+    background: var(--toast-info);
+  }
+  .toast-card[data-type='loading']::before {
+    background: var(--toast-loading);
   }
 
   /* ─── Animations ─── */
@@ -338,6 +348,10 @@ export const toastStyles = css`
     line-height: 1.4;
   }
 
+  .toast-message[data-titled] {
+    font-weight: 600;
+  }
+
   .toast-description {
     font-size: 13px;
     color: #6b7280;
@@ -358,8 +372,6 @@ export const toastStyles = css`
     color: var(--toast-info);
     cursor: pointer;
     align-self: flex-start;
-    text-decoration: underline;
-    text-underline-offset: 2px;
     transition: color 150ms ease;
   }
 

@@ -427,9 +427,7 @@ export class OverlayDialog extends LitElement {
     const remaining = allFields.filter((f) => !usedKeys.has(f.key));
     return html`
       ${groupFragments}
-      ${remaining.length
-        ? this._renderFormGrid(remaining, layout.columns ?? 1, gap, ctx)
-        : nothing}
+      ${remaining.length ? this._renderFormGrid(remaining, layout.columns ?? 1, gap, ctx) : nothing}
     `;
   }
 
@@ -488,19 +486,14 @@ export class OverlayDialog extends LitElement {
     `;
   }
 
-  private _renderFormInput(
-    field: FormFieldMeta,
-    value: unknown,
-    ctx: FormContext
-  ): TemplateResult {
+  private _renderFormInput(field: FormFieldMeta, value: unknown, ctx: FormContext): TemplateResult {
     switch (field.inputType) {
       case 'select':
         return html`
           <select
             class="form-select"
             id="form-${field.key}"
-            @change=${(e: Event) =>
-              ctx.onUpdate(field.key, (e.target as HTMLSelectElement).value)}
+            @change=${(e: Event) => ctx.onUpdate(field.key, (e.target as HTMLSelectElement).value)}
             @blur=${() => ctx.onBlur(field.key)}
           >
             <option value="" ?selected=${!value}>選択してください</option>
@@ -553,8 +546,7 @@ export class OverlayDialog extends LitElement {
             minlength=${field.minLength ?? nothing}
             maxlength=${field.maxLength ?? nothing}
             placeholder=${field.placeholder || nothing}
-            @input=${(e: Event) =>
-              ctx.onUpdate(field.key, (e.target as HTMLInputElement).value)}
+            @input=${(e: Event) => ctx.onUpdate(field.key, (e.target as HTMLInputElement).value)}
             @blur=${() => ctx.onBlur(field.key)}
           />
         `;
@@ -627,6 +619,7 @@ export class OverlayDialog extends LitElement {
       case 'loading':
         return html`
           ${this._renderSpinner()} ${s.label ? html`<p class="label">${s.label}</p>` : nothing}
+          ${s.html ? html`<div class="html-content">${unsafeHTML(s.html)}</div>` : nothing}
           ${s.description ? html`<p class="description">${s.description}</p>` : nothing}
         `;
 

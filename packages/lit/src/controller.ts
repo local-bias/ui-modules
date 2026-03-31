@@ -68,6 +68,7 @@ export class DialogController {
       dialogType: options.type,
       label: options.label ?? '',
       description: options.description ?? '',
+      html: options.html ?? '',
       icon: options.icon ?? null,
       progress: options.progress ?? null,
       allowOutsideClick: options.allowOutsideClick ?? false,
@@ -156,6 +157,10 @@ export class DialogController {
 
   setDescription(description: string): void {
     this.#update({ description });
+  }
+
+  setHtml(html: string): void {
+    this.#update({ html });
   }
 
   // ─── Queue ───────────────────────────────────────────────

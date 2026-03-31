@@ -24,9 +24,9 @@ export interface ToastItem {
   id: string;
   /** アイコン・色を決定するビジュアルタイプ */
   type: ToastType;
-  /** 主メッセージ */
+  /** 主メッセージ (description 指定時はタイトルとして太字表示) */
   message: string;
-  /** 補足説明 (省略可) */
+  /** 補足説明 (省略可)。指定時は message が太字タイトルになる */
   description: string;
   /** アクションボタン (省略可) */
   action: ToastAction | null;

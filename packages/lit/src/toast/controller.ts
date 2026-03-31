@@ -146,12 +146,18 @@ export class ToastController {
     if (!item || item.dismissing) return;
 
     const { duration: newDuration, ...rest } = patch;
-    const isLeavingLoading = item.type === 'loading' && rest.type != null && rest.type !== 'loading';
+    const isLeavingLoading =
+      item.type === 'loading' && rest.type != null && rest.type !== 'loading';
 
     if (newDuration !== undefined) {
       // 明示的な duration 変更: タイマーをリセットして新しい時間をセット
       this.#clearTimer(id);
-      this.#updateItem(id, { ...rest, duration: newDuration, remainingMs: newDuration, paused: false });
+      this.#updateItem(id, {
+        ...rest,
+        duration: newDuration,
+        remainingMs: newDuration,
+        paused: false,
+      });
       if (newDuration > 0) {
         this.#startTimer(id, newDuration);
       }

@@ -104,6 +104,10 @@ class DialogSingleton {
     this.#controller.setDescription(description);
   }
 
+  setHtml(html: string): void {
+    this.#controller.setHtml(html);
+  }
+
   // ─── Queue ───────────────────────────────────────────────
 
   setQueueItems(items: TaskItemInput[]): void {

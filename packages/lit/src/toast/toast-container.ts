@@ -116,7 +116,7 @@ export class ToastContainer extends LitElement {
           <div class="toast-body">
             <span class="toast-icon icon-${item.type}"> ${this._renderIcon(item.type)} </span>
             <div class="toast-text">
-              <p class="toast-message">${item.message}</p>
+              <p class="toast-message" ?data-titled=${!!item.description}>${item.message}</p>
               ${item.description
                 ? html`<p class="toast-description">${item.description}</p>`
                 : nothing}
@@ -134,11 +134,7 @@ export class ToastContainer extends LitElement {
             </div>
             <div class="toast-close-wrap">
               ${item.duration > 0 && item.type !== 'loading'
-                ? html`<svg
-                    class="toast-timer-ring"
-                    viewBox="0 0 24 24"
-                    aria-hidden="true"
-                  >
+                ? html`<svg class="toast-timer-ring" viewBox="0 0 24 24" aria-hidden="true">
                     <circle class="toast-timer-track" cx="12" cy="12" r="10" />
                     <circle
                       class="toast-timer-fill"

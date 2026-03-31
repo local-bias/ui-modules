@@ -106,6 +106,7 @@ export interface ShowOptions {
   type: DialogType;
   label?: string;
   description?: string;
+  html?: string;
   icon?: AlertIcon;
   progress?: number;
   allowOutsideClick?: boolean;
