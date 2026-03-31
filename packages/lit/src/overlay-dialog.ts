@@ -1,5 +1,5 @@
 import { LitElement, html, nothing, type TemplateResult } from 'lit';
-import { customElement, property, state } from 'lit/decorators.js';
+import { property, state } from 'lit/decorators.js';
 import { keyed } from 'lit/directives/keyed.js';
 import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 import type { DialogController } from './controller';
@@ -27,7 +27,6 @@ interface FormContext {
   onBlur: (key: string) => void;
 }
 
-@customElement('overlay-dialog')
 export class OverlayDialog extends LitElement {
   static override styles = overlayStyles;
 
@@ -718,4 +717,8 @@ declare global {
   interface HTMLElementTagNameMap {
     'overlay-dialog': OverlayDialog;
   }
+}
+
+if (!customElements.get('overlay-dialog')) {
+  customElements.define('overlay-dialog', OverlayDialog);
 }

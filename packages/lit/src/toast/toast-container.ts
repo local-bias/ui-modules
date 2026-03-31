@@ -1,12 +1,11 @@
 import { LitElement, html, nothing, type TemplateResult } from 'lit';
-import { customElement, property, state } from 'lit/decorators.js';
+import { property, state } from 'lit/decorators.js';
 import { repeat } from 'lit/directives/repeat.js';
 import type { ToastController } from './controller';
 import type { ToastItem, ToastState, ToastType } from './types';
 import { createInitialToastState } from './types';
 import { toastStyles } from './styles';
 
-@customElement('toast-container')
 export class ToastContainer extends LitElement {
   static override styles = toastStyles;
 
@@ -190,4 +189,8 @@ declare global {
   interface HTMLElementTagNameMap {
     'toast-container': ToastContainer;
   }
+}
+
+if (!customElements.get('toast-container')) {
+  customElements.define('toast-container', ToastContainer);
 }
