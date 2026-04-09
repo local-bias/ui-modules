@@ -1,6 +1,7 @@
 import { LitElement, html, nothing, type TemplateResult } from 'lit';
 import { property, state } from 'lit/decorators.js';
 import { keyed } from 'lit/directives/keyed.js';
+import { repeat } from 'lit/directives/repeat.js';
 import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 import type { DialogController } from './controller';
 import type {
@@ -285,27 +286,45 @@ export class OverlayDialog extends LitElement {
     const { start, end } = this._getQueueWindow(items);
     const visible = items.slice(start, end + 1);
 
+    const finishedStatuses = new Set<QueueItem['status']>(['done', 'skipped', 'error']);
+    const doneCount = items.filter((i) => finishedStatuses.has(i.status)).length;
+    const pct = total > 0 ? Math.round((doneCount / total) * 100) : 0;
+    const topHidden = start;
+    const bottomHidden = total - 1 - end;
+
     return html`
-      <ul class="task-list">
-        ${start > 0
-          ? html`<li class="queue-ellipsis" aria-hidden="true">
-              <span></span><span></span><span></span>
-            </li>`
-          : nothing}
-        ${visible.map(
-          (item) => html`
-            <li class="task-item">
-              <span class="task-icon">${this._renderTaskIcon(item.status)}</span>
-              <span class="task-label" data-status=${item.status}>${item.label}</span>
-            </li>
-          `
-        )}
-        ${end < total - 1
-          ? html`<li class="queue-ellipsis" aria-hidden="true">
-              <span></span><span></span><span></span>
-            </li>`
-          : nothing}
-      </ul>
+      <div class="queue-layout">
+        <div class="queue-progress-v">
+          <div class="queue-progress-track-v">
+            <div class="queue-progress-fill-v" style="height: ${pct}%"></div>
+          </div>
+          <span class="queue-progress-count-v">${doneCount}/${total}</span>
+        </div>
+        <ul class="task-list">
+          ${topHidden > 0
+            ? html`<li class="queue-ellipsis" aria-hidden="true">
+                <div class="queue-ellipsis-dots"><span></span><span></span><span></span></div>
+                <span class="queue-ellipsis-badge">+${topHidden}</span>
+              </li>`
+            : nothing}
+          ${repeat(
+            visible,
+            (item) => item.key,
+            (item) => html`
+              <li class="task-item" data-status=${item.status}>
+                <span class="task-icon">${this._renderTaskIcon(item.status)}</span>
+                <span class="task-label" data-status=${item.status}>${item.label}</span>
+              </li>
+            `
+          )}
+          ${bottomHidden > 0
+            ? html`<li class="queue-ellipsis" aria-hidden="true">
+                <div class="queue-ellipsis-dots"><span></span><span></span><span></span></div>
+                <span class="queue-ellipsis-badge">+${bottomHidden}</span>
+              </li>`
+            : nothing}
+        </ul>
+      </div>
     `;
   }
 

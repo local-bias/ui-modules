@@ -507,7 +507,28 @@ export const overlayStyles = css`
     align-items: center;
     gap: 12px;
     font-size: 15px;
+    border-radius: 6px;
+    transition: background 200ms ease;
     animation: task-item-enter 300ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+
+  .task-item[data-status='active'] {
+  }
+
+  @keyframes task-item-enter-below {
+    from {
+      opacity: 0;
+      transform: translateY(8px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  /* Queue items slide in from below (steps keep the left-slide default) */
+  .task-item[data-status] {
+    animation-name: task-item-enter-below;
   }
 
   .task-item:nth-child(1) {
@@ -580,6 +601,23 @@ export const overlayStyles = css`
     box-shadow: inset 0 0 0 1px var(--dialog-spinner-arc);
   }
 
+  @keyframes task-icon-pop {
+    from {
+      transform: scale(0.4);
+      opacity: 0;
+    }
+    to {
+      transform: scale(1);
+      opacity: 1;
+    }
+  }
+
+  .task-item[data-status='done'] .task-icon svg,
+  .task-item[data-status='error'] .task-icon svg,
+  .task-item[data-status='skipped'] .task-icon svg {
+    animation: task-icon-pop 400ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+  }
+
   .task-label {
     color: #6b7280;
     transition: color 250ms ease;
@@ -615,26 +653,95 @@ export const overlayStyles = css`
     color: #9ca3af;
   }
 
+  /* ─── Queue layout & progress ─── */
+
+  .queue-layout {
+    display: flex;
+    align-items: stretch;
+    gap: 10px;
+    width: 100%;
+  }
+
+  .queue-layout .task-list {
+    flex: 1;
+  }
+
+  .queue-progress-v {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    flex-shrink: 0;
+    width: 14px;
+    animation: task-item-enter 300ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+
+  .queue-progress-track-v {
+    flex: 1;
+    width: 2px;
+    background: rgba(156, 163, 175, 0.2);
+    border-radius: 1px;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .queue-progress-fill-v {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    background: var(--dialog-accent, #3b82f6);
+    border-radius: 1px;
+    transition: height 600ms cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  .queue-progress-count-v {
+    font-size: 10px;
+    font-weight: 500;
+    color: #9ca3af;
+    margin-top: 5px;
+    writing-mode: vertical-rl;
+    letter-spacing: 0.04em;
+    font-variant-numeric: tabular-nums;
+    line-height: 1;
+  }
+
   /* ─── Queue ellipsis ─── */
 
   .queue-ellipsis {
     display: flex;
-    flex-direction: column;
+    flex-direction: row;
     align-items: center;
-    gap: 3px;
-    padding: 4px 0;
-    /* アイコン列 (24px) の中央に配置: (24px - 4px dot) / 2 = 10px */
-    padding-left: 10px;
-    align-self: flex-start;
+    gap: 8px;
     list-style: none;
   }
 
-  .queue-ellipsis span {
+  .queue-ellipsis-dots {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
+    width: 24px;
+    padding: 4px 0;
+    flex-shrink: 0;
+  }
+
+  .queue-ellipsis-dots span {
     display: block;
     width: 4px;
     height: 4px;
     border-radius: 50%;
     background-color: #d1d5db;
+  }
+
+  .queue-ellipsis-badge {
+    font-size: 11px;
+    font-weight: 500;
+    color: #9ca3af;
+    background: rgba(156, 163, 175, 0.12);
+    border-radius: 10px;
+    padding: 2px 7px;
+    letter-spacing: 0.01em;
   }
 
   /* ─── Steps indicator ─── */
