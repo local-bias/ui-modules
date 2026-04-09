@@ -1,6 +1,6 @@
 {
   "name": "@konomi-app/ui",
-  "version": "5.8.1",
+  "version": "5.9.0",
   "type": "module",
   "main": "dist/index.cjs",
   "module": "dist/index.js",

@@ -7,8 +7,8 @@ export const overlayStyles = css`
       'Yu Gothic Medium', '游ゴシック', YuGothic, 'メイリオ', 'Hiragino Kaku Gothic ProN', Meiryo,
       sans-serif;
     --dialog-text-color: #356;
-    --dialog-font-size: 14px;
-    --dialog-font-size-desktop: 16px;
+    --dialog-font-size: 15px;
+    --dialog-font-size-desktop: 17px;
     --dialog-z-index: 1000;
     --dialog-backdrop-color: rgb(255 255 255 / 0.73);
     --dialog-backdrop-blur: 4px;
@@ -20,6 +20,7 @@ export const overlayStyles = css`
     --dialog-card-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1);
     --dialog-card-radius: 4px;
     --dialog-card-width: 400px;
+    --dialog-alert-width: 480px;
     --dialog-card-min-height: 200px;
     --dialog-card-padding: 24px;
     --dialog-card-padding-desktop: 32px;
@@ -40,7 +41,7 @@ export const overlayStyles = css`
     /* Button */
     --dialog-btn-radius: 6px;
     --dialog-btn-padding: 8px 24px;
-    --dialog-btn-font-size: 14px;
+    --dialog-btn-font-size: 15px;
 
     /* Spinner */
     --dialog-spinner-size: 60px;
@@ -53,14 +54,14 @@ export const overlayStyles = css`
     --dialog-form-gap: 16px;
     --dialog-form-columns: 1;
     --dialog-form-label-color: #374151;
-    --dialog-form-label-size: 13px;
+    --dialog-form-label-size: 14px;
     --dialog-form-label-weight: 500;
     --dialog-form-input-bg: #fff;
     --dialog-form-input-border: #d1d5db;
     --dialog-form-input-border-focus: var(--dialog-primary);
     --dialog-form-input-radius: 6px;
     --dialog-form-input-padding: 8px 12px;
-    --dialog-form-input-font-size: 14px;
+    --dialog-form-input-font-size: 15px;
     --dialog-form-error-color: var(--dialog-error);
     --dialog-form-hint-color: #9ca3af;
     --dialog-form-required-color: var(--dialog-error);
@@ -128,7 +129,25 @@ export const overlayStyles = css`
       max-width: 90vw;
       border-radius: var(--dialog-card-radius);
       padding: var(--dialog-card-padding-desktop);
+      transition: width 360ms cubic-bezier(0.16, 1, 0.3, 1);
     }
+  }
+
+  /* ─── Alert / Confirm specific sizing ─── */
+
+  @media (min-width: 640px) {
+    .card[data-type='alert'],
+    .card[data-type='confirm'] {
+      width: var(--dialog-alert-width);
+    }
+  }
+
+  .card[data-type='alert'] .label,
+  .card[data-type='confirm'] .label {
+    font-size: 22px;
+    font-weight: 700;
+    color: #0f172a;
+    letter-spacing: -0.01em;
   }
 
   /* ─── Card Open / Close Animations ─── */
@@ -353,9 +372,9 @@ export const overlayStyles = css`
   /* ─── Text ─── */
 
   .dialog-title {
-    font-size: 18px;
+    font-size: 20px;
     font-weight: 600;
-    color: #374151;
+    color: #1f2937;
     text-align: center;
     margin: 0 0 16px;
     word-break: break-word;
@@ -365,29 +384,29 @@ export const overlayStyles = css`
   }
 
   .label {
-    font-size: 16px;
-    font-weight: 400;
-    color: #1f2937;
+    font-size: 17px;
+    font-weight: 500;
+    color: #111827;
     text-align: center;
     margin: 0;
     word-break: break-word;
   }
 
   .description {
-    font-size: 14px;
-    color: #6b7280;
+    font-size: 15px;
+    color: #4b5563;
     text-align: center;
     margin: 0;
     word-break: break-word;
-    line-height: 1.6;
+    line-height: 1.65;
   }
 
   .html-content {
-    font-size: 14px;
-    color: #6b7280;
+    font-size: 15px;
+    color: #4b5563;
     text-align: center;
     word-break: break-word;
-    line-height: 1.6;
+    line-height: 1.65;
     width: 100%;
   }
 
@@ -487,7 +506,7 @@ export const overlayStyles = css`
     display: flex;
     align-items: center;
     gap: 12px;
-    font-size: 14px;
+    font-size: 15px;
     animation: task-item-enter 300ms cubic-bezier(0.16, 1, 0.3, 1) both;
   }
 
@@ -783,13 +802,13 @@ export const overlayStyles = css`
   }
 
   .form-error {
-    font-size: 12px;
+    font-size: 13px;
     color: var(--dialog-form-error-color);
     min-height: 1em;
   }
 
   .form-hint {
-    font-size: 12px;
+    font-size: 13px;
     color: var(--dialog-form-hint-color);
   }
 
@@ -841,7 +860,7 @@ export const overlayStyles = css`
   }
 
   .step-form-counter {
-    font-size: 12px;
+    font-size: 13px;
     color: var(--dialog-form-hint-color);
     text-align: center;
     margin: 0 0 4px;
@@ -874,7 +893,9 @@ export const overlayStyles = css`
     border: 1px solid var(--dialog-form-input-border);
     background: transparent;
     color: var(--dialog-text-color);
-    transition: background-color 120ms ease, border-color 120ms ease;
+    transition:
+      background-color 120ms ease,
+      border-color 120ms ease;
   }
 
   .btn-prev:hover {

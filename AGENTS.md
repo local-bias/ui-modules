@@ -1,1 +1,1 @@
-../ai/CLAUDE.md
+../ai/AGENTS.md
