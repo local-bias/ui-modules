@@ -25,9 +25,10 @@ export const toastStyles = css`
     /* Card */
     --toast-card-bg: #fff;
     --toast-card-border: #f3f4f6;
-    --toast-card-shadow: 0 4px 12px rgb(0 0 0 / 0.08), 0 1px 3px rgb(0 0 0 / 0.06);
+    --toast-card-shadow:
+      rgba(9, 30, 66, 0.31) 0px 0px 1px 0px, rgba(9, 30, 66, 0.25) 0px 20px 32px -8px;
     --toast-card-radius: 4px;
-    --toast-card-padding: 14px 16px;
+    --toast-card-padding: 16px 16px 16px 24px;
 
     /* Colors (inherit from dialog when available) */
     --toast-success: var(--dialog-success, #22c55e);
@@ -195,14 +196,15 @@ export const toastStyles = css`
     pointer-events: none;
   }
 
-  /* Type-based top stripe */
+  /* Type-based left accent bar */
   .toast-card::before {
     content: '';
     position: absolute;
-    bottom: 0;
-    left: 0;
-    right: 0;
-    height: 2px;
+    left: 10px;
+    top: 12px;
+    bottom: 12px;
+    width: 4px;
+    border-radius: 9999px;
   }
   .toast-card[data-type='success']::before {
     background: var(--toast-success);
