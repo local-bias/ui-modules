@@ -1,11 +1,11 @@
-import { LitElement, html, nothing, type TemplateResult } from 'lit';
+import { LitElement, html, nothing, type PropertyValues, type TemplateResult } from 'lit';
 import { property, state } from 'lit/decorators.js';
 import { keyed } from 'lit/directives/keyed.js';
 import { repeat } from 'lit/directives/repeat.js';
+import { styleMap } from 'lit/directives/style-map.js';
 import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 import type { DialogController } from './controller';
 import type {
-  AlertIcon,
   DialogState,
   FormFieldGroup,
   FormFieldMeta,
@@ -15,10 +15,14 @@ import type {
 } from './types';
 import { createInitialState } from './types';
 import { overlayStyles } from './styles';
+import { parseDateInputValue, toDateInputValue } from './form-date-utils';
+import { trapTabFocus } from './focus-trap';
+import { renderAlertIcon, renderSpinner, renderTaskIcon } from './icons';
+import { nextStepIndex, prevStepIndex } from './step-utils';
 
 // ─── Form rendering context ───────────────────────────────────
-// Abstracts data access so form rendering methods work for both
-// 'form' and 'step-form' dialog types without code duplication.
+// Abstracts data access so form rendering methods stay independent
+// of where the values live.
 
 interface FormContext {
   getValue: (key: string) => unknown;
@@ -38,65 +42,188 @@ export class OverlayDialog extends LitElement {
   @state() private _bodyKey = 0;
   @state() private _isClosing = false;
 
+  /** Snapshot of the most recent *open* state, rendered during the close-fade. */
+  private _lastOpenState: DialogState = createInitialState();
+
   private _unsubscribe?: () => void;
   private _closeTimer?: ReturnType<typeof setTimeout>;
   private _beforeUnloadHandler = (e: BeforeUnloadEvent) => e.preventDefault();
+  /** Body's overflow value prior to locking, restored when the dialog closes. */
+  private _prevBodyOverflow: string | null = null;
+  private _unloadGuardActive = false;
+  /** Watches the scroll region so its keyboard affordance follows the content size. */
+  private _bodyResizeObserver?: ResizeObserver;
+  /** Element focused before the dialog opened; focus returns here on close. */
+  private _previouslyFocused: HTMLElement | null = null;
+  private _pendingFocus = false;
+
+  /**
+   * Only block page navigation for dialogs representing in-flight work.
+   *
+   * steps クロームの有無は見ない — 処理中はクロームの下に loading/queue 本文が
+   * 出ているので既に該当するし、入力待ちの form/step-form 本文まで巻き込むのは
+   * 「in-flight work だけ」という本来の意図から外れる。
+   */
+  private _isBusyDialog(s: DialogState): boolean {
+    return (
+      s.open &&
+      (s.dialogType === 'loading' || s.dialogType === 'queue' || s.progress !== null)
+    );
+  }
+
+  private _syncUnloadGuard(s: DialogState): void {
+    const shouldGuard = this._isBusyDialog(s);
+    if (shouldGuard === this._unloadGuardActive) return;
+    this._unloadGuardActive = shouldGuard;
+    if (shouldGuard) {
+      window.addEventListener('beforeunload', this._beforeUnloadHandler);
+    } else {
+      window.removeEventListener('beforeunload', this._beforeUnloadHandler);
+    }
+  }
 
   override connectedCallback(): void {
     super.connectedCallback();
     if (this.controller) {
       this._state = { ...this.controller.state };
+      if (this._state.open) {
+        this._lastOpenState = this._state;
+        this._previouslyFocused = (document.activeElement as HTMLElement) ?? null;
+        this._pendingFocus = true;
+      }
+      this._syncUnloadGuard(this._state);
       this._unsubscribe = this.controller.subscribe((s) => {
         const wasOpen = this._state.open;
         const prevDialogType = this._state.dialogType;
-        const prevStepIndex = this._state.stepFormCurrentIndex;
+        const prevIndex = this._state.stepIndex;
 
         if (s.open && !wasOpen) {
           this._isClosing = false;
           clearTimeout(this._closeTimer);
-          window.addEventListener('beforeunload', this._beforeUnloadHandler);
+          this._previouslyFocused = (document.activeElement as HTMLElement) ?? null;
+          this._pendingFocus = true;
         } else if (!s.open && wasOpen) {
           this._isClosing = true;
           clearTimeout(this._closeTimer);
           this._closeTimer = setTimeout(() => {
             this._isClosing = false;
           }, 320);
-          window.removeEventListener('beforeunload', this._beforeUnloadHandler);
+          this._restoreFocus();
         }
+        this._syncUnloadGuard(s);
 
         if (s.open && s.dialogType !== prevDialogType) {
           this._bodyKey++;
-        } else if (
-          s.open &&
-          s.dialogType === 'step-form' &&
-          s.stepFormCurrentIndex !== prevStepIndex
-        ) {
-          // re-animate body when navigating between steps
+          // keyed() below discards the old body-inner subtree (and whatever had focus in
+          // it), so reclaim focus on .card to keep the Escape/Tab-trap handler reachable.
+          this._pendingFocus = true;
+        } else if (s.open && s.dialogType === 'step-form' && s.stepIndex !== prevIndex) {
+          // re-animate the body when navigating between wizard steps. The steps chrome
+          // sits outside keyed() so it transitions in place instead of re-entering.
           this._bodyKey++;
+          this._pendingFocus = true;
         }
 
+        if (s.open) this._lastOpenState = s;
         this._state = s;
         this._syncBodyScroll(s.open);
       });
     }
-    window.addEventListener('keydown', this._onKeyDown);
   }
 
   override disconnectedCallback(): void {
     super.disconnectedCallback();
     this._unsubscribe?.();
     this._syncBodyScroll(false);
+    this._bodyResizeObserver?.disconnect();
+    this._bodyResizeObserver = undefined;
     clearTimeout(this._closeTimer);
     window.removeEventListener('beforeunload', this._beforeUnloadHandler);
-    window.removeEventListener('keydown', this._onKeyDown);
+    this._unloadGuardActive = false;
+  }
+
+  override updated(changedProperties: PropertyValues): void {
+    super.updated(changedProperties);
+    this._observeBodyScroll();
+    if (this._pendingFocus) {
+      this._pendingFocus = false;
+      this._focusCard();
+    }
+  }
+
+  // ─── Scrollable body ─────────────────────────────────────
+
+  /**
+   * 本文がカードに収まらないときだけ `.card-body` をフォーカス可能にする。
+   * スクロール領域は自分がフォーカスを取れないとキーボードで動かせないが、
+   * 常時 tabindex を置くと短いダイアログに無意味なタブ停止が増えるため。
+   */
+  private _syncBodyScrollability(): void {
+    const body = (this.renderRoot as ShadowRoot).querySelector<HTMLElement>('.card-body');
+    if (!body) return;
+
+    if (body.scrollHeight > body.clientHeight) {
+      body.setAttribute('tabindex', '0');
+      body.setAttribute('data-scrollable', '');
+    } else {
+      body.removeAttribute('tabindex');
+      body.removeAttribute('data-scrollable');
+    }
+  }
+
+  /** 描画後だけでなく、画像や非同期 HTML で中身が伸びたときも追随させる。 */
+  private _observeBodyScroll(): void {
+    const body = (this.renderRoot as ShadowRoot).querySelector<HTMLElement>('.card-body');
+    if (!body) return;
+
+    if (!this._bodyResizeObserver && typeof ResizeObserver !== 'undefined') {
+      this._bodyResizeObserver = new ResizeObserver(() => this._syncBodyScrollability());
+    }
+    const observer = this._bodyResizeObserver;
+    if (observer) {
+      observer.disconnect();
+      observer.observe(body);
+      // keyed() で差し替わる本文ラッパー。カード側の高さが変わらないまま
+      // 中身だけ伸びるケースはこちらでしか拾えない。
+      const inner = body.firstElementChild;
+      if (inner) observer.observe(inner);
+    }
+
+    this._syncBodyScrollability();
   }
 
   private _syncBodyScroll(lock: boolean): void {
     if (lock) {
+      if (this._prevBodyOverflow === null) {
+        this._prevBodyOverflow = document.body.style.overflow;
+      }
       document.body.style.overflow = 'hidden';
-    } else {
-      document.body.style.overflow = '';
+    } else if (this._prevBodyOverflow !== null) {
+      document.body.style.overflow = this._prevBodyOverflow;
+      this._prevBodyOverflow = null;
     }
+  }
+
+  // ─── Focus management ────────────────────────────────────
+
+  private _focusCard(): void {
+    const card = (this.renderRoot as ShadowRoot).querySelector<HTMLElement>('.card');
+    card?.focus();
+  }
+
+  private _restoreFocus(): void {
+    const el = this._previouslyFocused;
+    this._previouslyFocused = null;
+    if (el && el.isConnected && typeof el.focus === 'function') {
+      el.focus();
+    }
+  }
+
+  private _trapFocus(e: KeyboardEvent): void {
+    const root = this.renderRoot as ShadowRoot;
+    const card = root.querySelector('.card');
+    if (!card) return;
+    trapTabFocus(e, card, root.activeElement, () => this._focusCard());
   }
 
   // ─── Event Handlers ──────────────────────────────────────
@@ -107,147 +234,18 @@ export class OverlayDialog extends LitElement {
     }
   }
 
-  private _onKeyDown = (e: KeyboardEvent): void => {
-    if (e.key === 'Escape' && this._state.open) {
+  private _onCardKeyDown = (e: KeyboardEvent): void => {
+    if (!this._state.open) return;
+    if (e.key === 'Escape') {
       this.controller.onEscapeKey();
+      return;
+    }
+    if (e.key === 'Tab') {
+      this._trapFocus(e);
     }
   };
 
   // ─── Render Helpers ──────────────────────────────────────
-
-  private _renderIcon(icon: AlertIcon | null): TemplateResult | typeof nothing {
-    if (!icon) return nothing;
-
-    if (icon === 'success') {
-      return html`
-        <svg
-          class="icon-container"
-          viewBox="0 0 64 64"
-          style="width:64px;height:64px;background:none;"
-        >
-          <circle class="check-circle" cx="32" cy="32" r="30" />
-          <polyline class="check-mark" points="20,34 28,42 44,24" />
-        </svg>
-      `;
-    }
-
-    const paths: Record<string, TemplateResult> = {
-      error: html`<svg
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        stroke-width="2"
-        stroke-linecap="round"
-        stroke-linejoin="round"
-      >
-        <circle cx="12" cy="12" r="10" />
-        <line x1="15" y1="9" x2="9" y2="15" />
-        <line x1="9" y1="9" x2="15" y2="15" />
-      </svg>`,
-      warning: html`<svg
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        stroke-width="2"
-        stroke-linecap="round"
-        stroke-linejoin="round"
-      >
-        <path
-          d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"
-        />
-        <line x1="12" y1="9" x2="12" y2="13" />
-        <line x1="12" y1="17" x2="12.01" y2="17" />
-      </svg>`,
-      info: html`<svg
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        stroke-width="2"
-        stroke-linecap="round"
-        stroke-linejoin="round"
-      >
-        <circle cx="12" cy="12" r="10" />
-        <line x1="12" y1="16" x2="12" y2="12" />
-        <line x1="12" y1="8" x2="12.01" y2="8" />
-      </svg>`,
-    };
-
-    return html` <div class="icon-container icon-${icon}">${paths[icon] ?? nothing}</div> `;
-  }
-
-  private _renderSpinner(): TemplateResult {
-    return html`
-      <div class="spinner-wrap">
-        <div class="spinner">
-          <div class="spinner-half">
-            <div class="spinner-inner"></div>
-          </div>
-        </div>
-      </div>
-    `;
-  }
-
-  private _renderTaskIcon(status: QueueItem['status']): TemplateResult {
-    switch (status) {
-      case 'active':
-        return html`
-          <div class="mini-spinner">
-            <div class="mini-spinner-half">
-              <div class="mini-spinner-inner"></div>
-            </div>
-          </div>
-        `;
-      case 'done':
-        return html`<svg
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="#22c55e"
-          stroke-width="2"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-        >
-          <circle cx="12" cy="12" r="10" />
-          <polyline points="9,12 11,14 15,10" />
-        </svg>`;
-      case 'error':
-        return html`<svg
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="#ef4444"
-          stroke-width="2"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-        >
-          <circle cx="12" cy="12" r="10" />
-          <line x1="15" y1="9" x2="9" y2="15" />
-          <line x1="9" y1="9" x2="15" y2="15" />
-        </svg>`;
-      case 'skipped':
-        return html`<svg
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="#9ca3af"
-          stroke-width="2"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-        >
-          <circle cx="12" cy="12" r="10" />
-          <line x1="8" y1="12" x2="16" y2="12" />
-        </svg>`;
-      case 'pending':
-      default:
-        return html`<svg
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="#d1d5db"
-          stroke-width="2"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-        >
-          <circle cx="12" cy="12" r="10" />
-        </svg>`;
-    }
-  }
 
   private _getQueueWindow(items: QueueItem[]): { start: number; end: number } {
     const total = items.length;
@@ -312,7 +310,7 @@ export class OverlayDialog extends LitElement {
             (item) => item.key,
             (item) => html`
               <li class="task-item" data-status=${item.status}>
-                <span class="task-icon">${this._renderTaskIcon(item.status)}</span>
+                <span class="task-icon">${renderTaskIcon(item.status)}</span>
                 <span class="task-label" data-status=${item.status}>${item.label}</span>
               </li>
             `
@@ -328,55 +326,60 @@ export class OverlayDialog extends LitElement {
     `;
   }
 
-  private _renderStepsHeader(items: StepItem[]): TemplateResult {
-    const fragments: TemplateResult[] = [];
-    items.forEach((item, i) => {
-      if (i > 0) {
-        fragments.push(html`<div class="step-connector"></div>`);
-      }
-      fragments.push(html`<div class="step-dot" data-status=${item.status}></div>`);
-    });
-    return html`<div class="steps-header">${fragments}</div>`;
-  }
+  /**
+   * ステップインジケータ。`card-body` の外 — つまり `keyed()` の外 — に描画され、
+   * 本文がどう差し替わっても DOM が維持されるので、ドットとラベルは作り直されずに
+   * CSS トランジションで状態だけが変化する。
+   *
+   * 実体は順序付きリスト。ドットは装飾なので aria-hidden にし、読み上げは
+   * 各ステップのラベル + 現在位置を示す aria-current が担う。ステップ間を
+   * つなぐ線は `.step-item::before` (CSS) — 等幅カラムの中心同士を結ぶ。
+   */
+  private _renderStepsChrome(s: DialogState): TemplateResult | typeof nothing {
+    if (!s.steps.length) return nothing;
 
-  private _renderStepsList(items: StepItem[]): TemplateResult {
+    const current: StepItem | undefined = s.steps[s.stepIndex];
+
     return html`
-      ${this._renderStepsHeader(items)}
-      <ul class="task-list">
-        ${items.map(
-          (item) => html`
-            <li class="task-item">
-              <span class="task-icon">${this._renderTaskIcon(item.status)}</span>
-              <span class="task-label" data-status=${item.status}>${item.label}</span>
-            </li>
-          `
-        )}
-      </ul>
+      <div class="steps-chrome">
+        <ol class="steps-header">
+          ${s.steps.map(
+            (item, i) => html`
+              <li
+                class="step-item"
+                data-status=${item.status}
+                aria-current=${i === s.stepIndex ? 'step' : nothing}
+              >
+                <span class="step-dot" data-status=${item.status} aria-hidden="true"></span>
+                <span
+                  class="step-label"
+                  id=${i === s.stepIndex ? 'dialog-step-label' : nothing}
+                  >${item.label}</span
+                >
+              </li>
+            `
+          )}
+        </ol>
+        ${current
+          ? html`<p class="steps-counter">${s.stepIndex + 1} / ${s.steps.length}</p>`
+          : nothing}
+      </div>
     `;
   }
 
   // ─── Form Helpers ────────────────────────────────────────
 
-  private _createFormContext(): FormContext {
-    const s = this._state;
+  /**
+   * 単発フォームでもウィザードでも同じコンテキストで足りる — コントローラーが
+   * ウィザードの現在ステップを `state.form*` に射影しているため。
+   */
+  private _createFormContext(s: DialogState): FormContext {
     return {
       getValue: (k) => s.formValues[k],
       getError: (k) => s.formErrors[k] ?? '',
       getTouched: (k) => !!s.formTouched[k],
       onUpdate: (k, v) => this.controller.updateFormField(k, v),
       onBlur: (k) => this.controller.touchFormField(k),
-    };
-  }
-
-  private _createStepFormContext(): FormContext {
-    const s = this._state;
-    const step = s.stepFormSteps[s.stepFormCurrentIndex];
-    return {
-      getValue: (k) => step?.values[k],
-      getError: (k) => step?.errors[k] ?? '',
-      getTouched: (k) => !!step?.touched[k],
-      onUpdate: (k, v) => this.controller.updateStepFormField(k, v),
-      onBlur: (k) => this.controller.touchStepFormField(k),
     };
   }
 
@@ -511,10 +514,13 @@ export class OverlayDialog extends LitElement {
           <select
             class="form-select"
             id="form-${field.key}"
-            @change=${(e: Event) => ctx.onUpdate(field.key, (e.target as HTMLSelectElement).value)}
+            @change=${(e: Event) => {
+              const v = (e.target as HTMLSelectElement).value;
+              ctx.onUpdate(field.key, v === '' ? undefined : v);
+            }}
             @blur=${() => ctx.onBlur(field.key)}
           >
-            <option value="" ?selected=${!value}>選択してください</option>
+            <option value="" ?selected=${!value}>${this.controller.texts.selectPlaceholder}</option>
             ${field.options.map(
               (opt) => html`<option value=${opt} ?selected=${value === opt}>${opt}</option>`
             )}
@@ -545,10 +551,10 @@ export class OverlayDialog extends LitElement {
             type="date"
             class="form-input"
             id="form-${field.key}"
-            .value=${value != null ? String(value) : ''}
+            .value=${toDateInputValue(value)}
             @input=${(e: Event) => {
               const str = (e.target as HTMLInputElement).value;
-              ctx.onUpdate(field.key, str || undefined);
+              ctx.onUpdate(field.key, parseDateInputValue(str));
             }}
             @blur=${() => ctx.onBlur(field.key)}
           />
@@ -571,8 +577,7 @@ export class OverlayDialog extends LitElement {
     }
   }
 
-  private _renderButtons(): TemplateResult | typeof nothing {
-    const s = this._state;
+  private _renderButtons(s: DialogState): TemplateResult | typeof nothing {
     if (!s.showConfirmButton && !s.showCancelButton) return nothing;
 
     return html`
@@ -593,10 +598,9 @@ export class OverlayDialog extends LitElement {
 
   // ─── Step Form Helpers ───────────────────────────────────
 
-  private _renderStepFormButtons(): TemplateResult {
-    const s = this._state;
-    const isFirst = s.stepFormCurrentIndex === 0;
-    const isLast = s.stepFormCurrentIndex === s.stepFormSteps.length - 1;
+  private _renderStepFormButtons(s: DialogState): TemplateResult {
+    const isFirst = prevStepIndex(s.steps, s.stepIndex) < 0;
+    const isLast = nextStepIndex(s.steps, s.stepIndex) < 0;
     const submitText = isLast ? s.stepFormSubmitText : s.stepFormNextText;
 
     return html`
@@ -620,84 +624,65 @@ export class OverlayDialog extends LitElement {
     `;
   }
 
-  private _deriveStepItems(): StepItem[] {
-    const s = this._state;
-    return s.stepFormSteps.map((st, i) => {
-      let status: StepItem['status'] = 'pending';
-      if (i < s.stepFormCurrentIndex) status = 'done';
-      else if (i === s.stepFormCurrentIndex) status = 'active';
-      return { key: st.key, label: st.label, status };
-    });
-  }
-
-  private _renderBody(): TemplateResult {
-    const s = this._state;
-
+  private _renderBody(s: DialogState): TemplateResult {
     switch (s.dialogType) {
       case 'loading':
         return html`
-          ${this._renderSpinner()} ${s.label ? html`<p class="label">${s.label}</p>` : nothing}
+          ${renderSpinner()}
+          ${s.label ? html`<p class="label" id="dialog-label">${s.label}</p>` : nothing}
           ${s.html ? html`<div class="html-content">${unsafeHTML(s.html)}</div>` : nothing}
-          ${s.description ? html`<p class="description">${s.description}</p>` : nothing}
+          ${s.description
+            ? html`<p class="description" id="dialog-description">${s.description}</p>`
+            : nothing}
         `;
 
       case 'alert':
       case 'confirm':
         return html`
-          ${this._renderIcon(s.icon)} ${s.title ? html`<p class="label">${s.title}</p>` : nothing}
-          ${s.description ? html`<p class="description">${s.description}</p>` : nothing}
+          ${renderAlertIcon(s.icon)}
+          ${s.title ? html`<p class="label" id="dialog-label">${s.title}</p>` : nothing}
+          ${s.description
+            ? html`<p class="description" id="dialog-description">${s.description}</p>`
+            : nothing}
           ${s.html ? html`<div class="html-content">${unsafeHTML(s.html)}</div>` : nothing}
-          ${this._renderButtons()}
         `;
 
       case 'queue':
         return html`
-          ${s.label ? html`<p class="label">${s.label}</p>` : nothing}
+          ${s.label ? html`<p class="label" id="dialog-label">${s.label}</p>` : nothing}
           ${this._renderQueueList(s.queues)}
         `;
 
-      case 'steps':
-        return html`
-          ${s.label ? html`<p class="label">${s.label}</p>` : nothing}
-          ${this._renderStepsList(s.steps)}
-        `;
-
       case 'form': {
-        const ctx = this._createFormContext();
+        const ctx = this._createFormContext(s);
         return html`
-          ${s.title ? html`<p class="label">${s.title}</p>` : nothing}
-          ${s.description ? html`<p class="description">${s.description}</p>` : nothing}
+          ${s.title ? html`<p class="label" id="dialog-label">${s.title}</p>` : nothing}
+          ${s.description
+            ? html`<p class="description" id="dialog-description">${s.description}</p>`
+            : nothing}
           <div class="form-scroll-container">
             ${this._renderForm(s.formFields, s.formLayout, ctx)}
           </div>
-          ${this._renderButtons()}
         `;
       }
 
+      // ステップ表示 (ドット/カウンター/ステップ名) はクロームの担当なので、
+      // ここは現在ステップのフォームとナビゲーションだけを描く。
       case 'step-form': {
-        const stepItems = this._deriveStepItems();
-        const currentStep = s.stepFormSteps[s.stepFormCurrentIndex];
-        if (!currentStep) return html`${nothing}`;
-
-        const ctx = this._createStepFormContext();
-        const stepCount = s.stepFormSteps.length;
-        const counterText = `${s.stepFormCurrentIndex + 1} / ${stepCount}`;
+        if (!s.steps[s.stepIndex]) return html`${nothing}`;
+        const ctx = this._createFormContext(s);
 
         return html`
-          ${this._renderStepsHeader(stepItems)}
-          <p class="step-form-counter">${counterText}</p>
-          <p class="label">${currentStep.label}</p>
-          ${currentStep.description
-            ? html`<p class="description">${currentStep.description}</p>`
+          ${s.description
+            ? html`<p class="description" id="dialog-description">${s.description}</p>`
             : nothing}
-          ${currentStep.fields.length
+          ${s.formFields.length
             ? html`
                 <div class="form-scroll-container">
-                  ${this._renderForm(currentStep.fields, currentStep.layout, ctx)}
+                  ${this._renderForm(s.formFields, s.formLayout, ctx)}
                 </div>
               `
             : nothing}
-          ${this._renderStepFormButtons()}
         `;
       }
 
@@ -706,25 +691,86 @@ export class OverlayDialog extends LitElement {
     }
   }
 
+  /**
+   * ボタン列はスクロールする本文 (.card-body) の外に置く。
+   * 本文がビューポートを超えて伸びても、確定/キャンセルは常に見えて押せる。
+   */
+  private _renderFooter(s: DialogState): TemplateResult | typeof nothing {
+    let buttons: TemplateResult | typeof nothing = nothing;
+
+    switch (s.dialogType) {
+      case 'alert':
+      case 'confirm':
+      case 'form':
+        buttons = this._renderButtons(s);
+        break;
+      case 'step-form':
+        if (s.steps[s.stepIndex]) buttons = this._renderStepFormButtons(s);
+        break;
+      default:
+        break;
+    }
+
+    if (buttons === nothing) return nothing;
+    return html`<div class="card-footer">${buttons}</div>`;
+  }
+
   override render(): TemplateResult {
     const s = this._state;
+    // While the close animation plays, keep rendering the last *open* state so
+    // the card doesn't flash its content back to the reset ('loading') state
+    // mid-fade — only the backdrop's open/closed transition uses live state.
+    const displayState = this._isClosing ? this._lastOpenState : s;
+    // alert/confirm/form は本文側で title を `.label` として描くので、ヘッダーには出さない。
     const showHeaderTitle =
-      s.title &&
-      s.dialogType !== 'alert' &&
-      s.dialogType !== 'confirm' &&
-      s.dialogType !== 'form' &&
-      s.dialogType !== 'step-form';
+      displayState.title &&
+      displayState.dialogType !== 'alert' &&
+      displayState.dialogType !== 'confirm' &&
+      displayState.dialogType !== 'form';
+    // Every label node (`#dialog-title` / `#dialog-step-label` / `#dialog-label`) is only
+    // rendered when it has content. Fall back to a static aria-label so the dialog never
+    // ends up with no accessible name at all (e.g. showLoading() with no label).
+    const hasStepLabel = !!displayState.steps[displayState.stepIndex];
+    const hasLabelledByTarget =
+      !!displayState.title || !!displayState.label || hasStepLabel;
 
     return html`
       <div class="backdrop" ?data-open=${s.open} @click=${this._onBackdropClick}>
-        <div class="card" data-type=${s.dialogType} ?data-closing=${this._isClosing}>
-          ${showHeaderTitle ? html`<p class="dialog-title">${s.title}</p>` : nothing}
+        <div
+          class="card"
+          data-type=${displayState.dialogType}
+          style=${styleMap(
+            // 幅は型別の既定 (CSS) をインラインのカスタムプロパティで上書きする。
+            // 指定なしのときは何も書かず、テーマ側の --dialog-* をそのまま活かす。
+            displayState.width ? { '--dialog-width': displayState.width } : {}
+          )}
+          ?data-closing=${this._isClosing}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby=${hasLabelledByTarget
+            ? 'dialog-title dialog-step-label dialog-label'
+            : nothing}
+          aria-label=${hasLabelledByTarget ? nothing : this.controller.texts.dialogAriaLabel}
+          aria-describedby="dialog-description"
+          tabindex="-1"
+          @keydown=${this._onCardKeyDown}
+        >
+          ${showHeaderTitle
+            ? html`<p class="dialog-title" id="dialog-title">${displayState.title}</p>`
+            : nothing}
+          ${this._renderStepsChrome(displayState)}
           <div class="card-body">
-            ${keyed(this._bodyKey, html`<div class="body-inner">${this._renderBody()}</div>`)}
+            ${keyed(
+              this._bodyKey,
+              html`<div class="body-inner">${this._renderBody(displayState)}</div>`
+            )}
           </div>
+          ${keyed(this._bodyKey, this._renderFooter(displayState))}
           <div
             class="progress-bar"
-            style="width:${s.progress ?? 0}%;opacity:${s.progress !== null ? 1 : 0}"
+            style="width:${displayState.progress ?? 0}%;opacity:${displayState.progress !== null
+              ? 1
+              : 0}"
           ></div>
         </div>
       </div>
@@ -738,6 +784,6 @@ declare global {
   }
 }
 
-if (!customElements.get('overlay-dialog')) {
+if (typeof customElements !== 'undefined' && !customElements.get('overlay-dialog')) {
   customElements.define('overlay-dialog', OverlayDialog);
 }
