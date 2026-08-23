@@ -74,3 +74,17 @@ export const createInitialToastState = (): ToastState => ({
   maxVisible: 3,
   defaultDuration: 4000,
 });
+
+// ─── Text overrides (i18n) ──────────────────────────────────
+
+export interface ToastTexts {
+  /** aria-label on each toast's close button. */
+  closeLabel?: string;
+  /** aria-label on the toast container's live region. */
+  regionLabel?: string;
+}
+
+export const DEFAULT_TOAST_TEXTS: Required<ToastTexts> = {
+  closeLabel: '閉じる',
+  regionLabel: '通知',
+};

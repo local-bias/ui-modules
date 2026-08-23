@@ -1,5 +1,5 @@
 import { ToastController } from './controller';
-import type { ToastConfig, ToastItem, ToastOptions } from './types';
+import type { ToastConfig, ToastItem, ToastOptions, ToastTexts } from './types';
 import './toast-container';
 import type { ToastContainer } from './toast-container';
 
@@ -8,7 +8,7 @@ class ToastSingleton {
   #element: ToastContainer | null = null;
 
   #ensureElement(): void {
-    if (this.#element) return;
+    if (this.#element?.isConnected) return;
     if (typeof document === 'undefined') return;
 
     const el = document.createElement('toast-container') as ToastContainer;
@@ -19,7 +19,7 @@ class ToastSingleton {
 
   // ─── Configuration ──────────────────────────────────────
 
-  configure(config: Partial<ToastConfig>): void {
+  configure(config: Partial<ToastConfig> & { texts?: ToastTexts }): void {
     this.#controller.configure(config);
   }
 

@@ -109,6 +109,7 @@ export class ToastContainer extends LitElement {
           data-type=${item.type}
           ?data-dismissing=${item.dismissing}
           ?data-paused=${item.paused}
+          role=${item.type === 'error' ? 'alert' : 'status'}
           @mouseenter=${() => this.controller.pauseTimer(item.id)}
           @mouseleave=${() => this.controller.resumeTimer(item.id)}
         >
@@ -147,7 +148,7 @@ export class ToastContainer extends LitElement {
               <button
                 class="toast-close"
                 @click=${() => this.controller.dismiss(item.id)}
-                aria-label="閉じる"
+                aria-label=${this.controller.texts.closeLabel}
               >
                 <svg
                   viewBox="0 0 24 24"
@@ -174,7 +175,18 @@ export class ToastContainer extends LitElement {
     const s = this._state;
 
     return html`
-      <div class="container" data-position=${s.position} role="region" aria-label="通知">
+      <div
+        class="container"
+        data-position=${s.position}
+        role="region"
+        aria-label=${this.controller.texts.regionLabel}
+      >
+        <!--
+          No aria-live here: each toast card below carries its own role="status"/"alert",
+          which already establishes a per-item live region. Adding aria-live on the
+          container too would nest live regions — a documented anti-pattern that causes
+          inconsistent double-announcement across screen readers.
+        -->
         ${repeat(
           s.items,
           (item) => item.id,
@@ -191,6 +203,6 @@ declare global {
   }
 }
 
-if (!customElements.get('toast-container')) {
+if (typeof customElements !== 'undefined' && !customElements.get('toast-container')) {
   customElements.define('toast-container', ToastContainer);
 }
