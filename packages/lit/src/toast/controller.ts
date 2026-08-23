@@ -3,8 +3,10 @@ import {
   type ToastItem,
   type ToastOptions,
   type ToastState,
+  type ToastTexts,
   type ToastType,
   createInitialToastState,
+  DEFAULT_TOAST_TEXTS,
 } from './types';
 
 type Listener = (state: ToastState) => void;
@@ -21,6 +23,7 @@ export class ToastController {
   #timerStartedAt = new Map<string, number>();
   #dismissTimers = new Map<string, ReturnType<typeof setTimeout>>();
   #nextId = 0;
+  #texts: Required<ToastTexts> = { ...DEFAULT_TOAST_TEXTS };
 
   constructor() {
     this.#state = createInitialToastState();
@@ -49,12 +52,18 @@ export class ToastController {
 
   // ─── Configuration ──────────────────────────────────────
 
-  configure(config: Partial<ToastConfig>): void {
+  configure(config: Partial<ToastConfig> & { texts?: ToastTexts }): void {
     const patch: Partial<ToastState> = {};
     if (config.position != null) patch.position = config.position;
     if (config.maxVisible != null) patch.maxVisible = config.maxVisible;
     if (config.defaultDuration != null) patch.defaultDuration = config.defaultDuration;
     if (Object.keys(patch).length > 0) this.#update(patch);
+    if (config.texts) this.#texts = { ...this.#texts, ...config.texts };
+  }
+
+  /** Current effective default texts (built-ins merged with any `configure({ texts })` override). */
+  get texts(): Readonly<Required<ToastTexts>> {
+    return this.#texts;
   }
 
   // ─── Show ───────────────────────────────────────────────
@@ -116,19 +125,25 @@ export class ToastController {
   }
 
   dismissAll(): void {
+    const pendingAll = this.#dismissTimers.get('__all__');
+    if (pendingAll != null) clearTimeout(pendingAll);
+
     for (const item of this.#state.items) {
       this.#clearTimer(item.id);
       this.#timerStartedAt.delete(item.id);
     }
 
-    const items = this.#state.items
-      .filter((i) => !i.dismissing)
-      .map((item) => ({ ...item, dismissing: true, paused: true }));
+    const items = this.#state.items.map((item) =>
+      item.dismissing ? item : { ...item, dismissing: true, paused: true }
+    );
     this.#update({ items });
 
     const timer = setTimeout(() => {
-      this.#update({ items: [] });
-      this.#dismissTimers.clear();
+      this.#dismissTimers.delete('__all__');
+      // Only remove items still marked dismissing — anything shown during the
+      // animation window (e.g. a new toast.show() call) must survive.
+      const remaining = this.#state.items.filter((i) => !i.dismissing);
+      this.#update({ items: remaining });
     }, DISMISS_ANIMATION_MS);
     this.#dismissTimers.set('__all__', timer);
   }

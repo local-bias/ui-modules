@@ -23,6 +23,9 @@ interface ZodDef {
   entries?: Record<string, string>;
   // ZodEffects v3: inner schema
   schema?: ZodFieldLike;
+  // ZodPipe (v4 .transform()/z.preprocess()) / ZodPipeline (v3 .pipe()): the two sides
+  in?: ZodFieldLike;
+  out?: ZodFieldLike;
   [key: string]: unknown;
 }
 
@@ -66,6 +69,36 @@ function resolveTypeName(field: ZodFieldLike): string {
 
 // ─── Unwrap wrappers ─────────────────────────────────────────
 
+// Field types the switch in extractFieldMeta() actually understands. Used to
+// pick the renderable side of a ZodPipe/ZodPipeline (see below).
+const KNOWN_FIELD_TYPES = new Set([
+  'ZodString',
+  'ZodNumber',
+  'ZodBoolean',
+  'ZodEnum',
+  'ZodNativeEnum',
+  'ZodDate',
+]);
+
+/** Whether peeling Optional/Nullable/Default/Effects/Pipe wrappers eventually reaches a known field type. */
+function resolvesToKnownField(field: ZodFieldLike | undefined, depth = 0): boolean {
+  if (!field || depth > 10) return false;
+  const t = resolveTypeName(field);
+  if (KNOWN_FIELD_TYPES.has(t)) return true;
+  if (t === 'ZodOptional' || t === 'ZodNullable' || t === 'ZodDefault') {
+    return resolvesToKnownField(field._def.innerType, depth + 1);
+  }
+  if (t === 'ZodEffects') {
+    return resolvesToKnownField(field._def.schema, depth + 1);
+  }
+  if (t === 'ZodPipe' || t === 'ZodPipeline') {
+    return (
+      resolvesToKnownField(field._def.in, depth + 1) || resolvesToKnownField(field._def.out, depth + 1)
+    );
+  }
+  return false;
+}
+
 interface UnwrapResult {
   inner: ZodFieldLike;
   required: boolean;
@@ -95,6 +128,19 @@ function unwrapType(zodType: ZodFieldLike): UnwrapResult {
     } else if (typeName === 'ZodEffects') {
       // v3 only: .refine() / .transform() wraps in ZodEffects
       inner = inner._def.schema!;
+    } else if (typeName === 'ZodPipe' || typeName === 'ZodPipeline') {
+      // v4 .transform(): `in` is the original (renderable) schema, `out` is the transform.
+      // v4 z.preprocess() / v3 .pipe(): `in` is the preprocessor, `out` is the target schema.
+      // Prefer whichever side eventually resolves to a field type we understand.
+      const inSide = inner._def.in;
+      const outSide = inner._def.out;
+      if (resolvesToKnownField(inSide)) {
+        inner = inSide!;
+      } else if (outSide) {
+        inner = outSide;
+      } else {
+        break;
+      }
     } else {
       break;
     }

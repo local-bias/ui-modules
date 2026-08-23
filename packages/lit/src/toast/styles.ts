@@ -483,4 +483,17 @@ export const toastStyles = css`
       opacity: 1;
     }
   }
+
+  /* Keep the loading spinner rotating (it communicates in-progress state) but
+     cut every decorative enter/exit animation and transition down to ~instant. */
+  @media (prefers-reduced-motion: reduce) {
+    *:not(.toast-spinner),
+    *:not(.toast-spinner)::before,
+    *:not(.toast-spinner)::after {
+      animation-duration: 0.01ms !important;
+      animation-delay: 0ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
 `;
