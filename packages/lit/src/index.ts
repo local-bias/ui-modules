@@ -5,9 +5,13 @@ export type {
   AlertIcon,
   AlertOptions,
   ConfirmOptions,
+  DialogConfig,
   DialogResult,
   DialogState,
+  DialogTexts,
   DialogType,
+  DialogWidth,
+  DialogWidthToken,
   FormFieldGroup,
   FormFieldMeta,
   FormInputType,
@@ -16,11 +20,11 @@ export type {
   QueueItem,
   QueueItemStatus,
   ShowOptions,
-  StepFormItem,
   StepFormOptions,
   StepFormStepInput,
   StepItem,
   StepItemStatus,
+  StepsOptions,
   TaskItemInput,
 } from './types';
 
@@ -35,5 +39,6 @@ export type {
   ToastOptions,
   ToastPosition,
   ToastState,
+  ToastTexts,
   ToastType,
 } from './toast/types';

@@ -2,10 +2,13 @@ import { DialogController } from './controller';
 import type {
   AlertOptions,
   ConfirmOptions,
+  DialogConfig,
   DialogResult,
+  DialogWidth,
   FormOptions,
   StepFormOptions,
   StepFormStepInput,
+  StepsOptions,
   TaskItemInput,
   ShowOptions,
 } from './types';
@@ -17,13 +20,19 @@ class DialogSingleton {
   #element: OverlayDialog | null = null;
 
   #ensureElement(): void {
-    if (this.#element) return;
+    if (this.#element?.isConnected) return;
     if (typeof document === 'undefined') return;
 
     const el = document.createElement('overlay-dialog') as OverlayDialog;
     el.controller = this.#controller;
     document.body.appendChild(el);
     this.#element = el;
+  }
+
+  // ─── Configuration ───────────────────────────────────────
+
+  configure(config: DialogConfig): void {
+    this.#controller.configure(config);
   }
 
   // ─── Core ────────────────────────────────────────────────
@@ -77,12 +86,14 @@ class DialogSingleton {
     this.#controller.onStepPrev();
   }
 
-  updateStepFormField(fieldKey: string, value: unknown): void {
-    this.#controller.updateStepFormField(fieldKey, value);
+  // ─── Form field updates (単発フォーム / ウィザード共通) ────
+
+  updateFormField(fieldKey: string, value: unknown): void {
+    this.#controller.updateFormField(fieldKey, value);
   }
 
-  touchStepFormField(fieldKey: string): void {
-    this.#controller.touchStepFormField(fieldKey);
+  touchFormField(fieldKey: string): void {
+    this.#controller.touchFormField(fieldKey);
   }
 
   // ─── Loading helpers ─────────────────────────────────────
@@ -106,6 +117,10 @@ class DialogSingleton {
 
   setHtml(html: string): void {
     this.#controller.setHtml(html);
+  }
+
+  setWidth(width: DialogWidth | null): void {
+    this.#controller.setWidth(width);
   }
 
   // ─── Queue ───────────────────────────────────────────────
@@ -143,15 +158,15 @@ class DialogSingleton {
     this.#controller.clearQueue();
   }
 
-  // ─── Steps ───────────────────────────────────────────────
+  // ─── Steps (常駐クローム) ─────────────────────────────────
 
   setStepItems(items: TaskItemInput[]): void {
     this.#controller.setStepItems(items);
   }
 
-  showSteps(items: TaskItemInput[]): void {
+  showSteps(items: TaskItemInput[], options?: StepsOptions): void {
     this.#ensureElement();
-    this.#controller.showSteps(items);
+    this.#controller.showSteps(items, options);
   }
 
   activateStep(key: string): void {
