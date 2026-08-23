@@ -21,7 +21,17 @@ export const overlayStyles = css`
     --dialog-card-radius: 4px;
     --dialog-card-width: 400px;
     --dialog-alert-width: 480px;
+    /* 幅トークン (sm / md / lg / xl / full) の実寸 */
+    --dialog-width-sm: 320px;
+    --dialog-width-md: 400px;
+    --dialog-width-lg: 500px;
+    --dialog-width-xl: 720px;
+    --dialog-width-full: 100%;
     --dialog-card-min-height: 200px;
+    /* ビューポートに対するカードの上限高さ (backdrop = 表示領域の 100%)。 */
+    --dialog-card-max-height: 100%;
+    /* 640px 以上でカードとビューポート端の間に確保する余白。 */
+    --dialog-viewport-gutter: 16px;
     --dialog-card-padding: 24px;
     --dialog-card-padding-desktop: 32px;
 
@@ -42,6 +52,10 @@ export const overlayStyles = css`
     --dialog-btn-radius: 6px;
     --dialog-btn-padding: 8px 24px;
     --dialog-btn-font-size: 15px;
+
+    /* Steps */
+    --dialog-step-label-size: 12px;
+    --dialog-step-label-color: #6b7280;
 
     /* Spinner */
     --dialog-spinner-size: 60px;
@@ -77,8 +91,9 @@ export const overlayStyles = css`
   .backdrop {
     position: fixed;
     inset: 0;
-    width: 100vw;
+    /* dvh はモバイルのアドレスバー分を除いた実表示領域。非対応環境は vh に落ちる。 */
     height: 100vh;
+    height: 100dvh;
     display: grid;
     place-items: end stretch;
     z-index: var(--dialog-z-index);
@@ -102,30 +117,49 @@ export const overlayStyles = css`
     }
     .backdrop {
       place-items: center;
+      padding: var(--dialog-viewport-gutter);
     }
   }
 
   /* ─── Card ─── */
 
   .card {
+    /*
+     * 型ごとの既定幅。実際に width へ流し込むのは下のメディアクエリ1箇所だけで、
+     * 呼び出し側の指定 (--dialog-width) はこの上にインラインで載って優先される。
+     */
+    --_card-width: var(--dialog-card-width);
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: flex-start;
     gap: 0;
+    box-sizing: border-box;
     padding: var(--dialog-card-padding);
     background-color: var(--dialog-card-bg);
     border-radius: 0;
     box-shadow: var(--dialog-card-shadow);
     border: 1px solid var(--dialog-card-border);
-    min-height: var(--dialog-card-min-height);
+    /* 画面が低いときは min-height より収まりを優先する (min-height は max-height に勝つため)。 */
+    min-height: min(var(--dialog-card-min-height), 100%);
+    max-height: var(--dialog-card-max-height);
     position: relative;
     overflow: hidden;
   }
 
+  /* .card receives programmatic focus (tabindex="-1") when the dialog opens. */
+  .card:focus {
+    outline: none;
+  }
+
+  .card:focus-visible {
+    outline: 2px solid var(--dialog-primary);
+    outline-offset: 2px;
+  }
+
   @media (min-width: 640px) {
     .card {
-      width: var(--dialog-card-width);
+      width: var(--dialog-width, var(--_card-width));
       max-width: 90vw;
       border-radius: var(--dialog-card-radius);
       padding: var(--dialog-card-padding-desktop);
@@ -135,11 +169,9 @@ export const overlayStyles = css`
 
   /* ─── Alert / Confirm specific sizing ─── */
 
-  @media (min-width: 640px) {
-    .card[data-type='alert'],
-    .card[data-type='confirm'] {
-      width: var(--dialog-alert-width);
-    }
+  .card[data-type='alert'],
+  .card[data-type='confirm'] {
+    --_card-width: var(--dialog-alert-width);
   }
 
   .card[data-type='alert'] .label,
@@ -190,12 +222,25 @@ export const overlayStyles = css`
   /* ─── Card Body ─── */
 
   .card-body {
-    flex: 1;
+    flex: 1 1 auto;
     display: flex;
     flex-direction: column;
     align-items: stretch;
-    justify-content: center;
+    /* 中央寄せは .body-inner の auto マージンが担う。ここを center にすると
+       あふれたとき上端が掴めなくなる (flex の中央寄せ + overflow の既知の罠)。 */
+    justify-content: flex-start;
     width: 100%;
+    /* flex アイテムの既定 min-height:auto を外さないとスクロールが効かない。 */
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
+  /* あふれている間だけ .card-body はフォーカス可能 (キーボードスクロール用)。 */
+  .card-body[data-scrollable]:focus-visible {
+    outline: 2px solid var(--dialog-primary);
+    outline-offset: -2px;
+    border-radius: 4px;
   }
 
   /* ─── Body Inner (animated content wrapper) ─── */
@@ -219,6 +264,8 @@ export const overlayStyles = css`
     align-items: center;
     gap: 16px;
     width: 100%;
+    /* 余白があれば中央、あふれたら先頭から。 */
+    margin-block: auto;
     animation: body-enter 380ms 60ms cubic-bezier(0.16, 1, 0.3, 1) both;
   }
 
@@ -420,6 +467,14 @@ export const overlayStyles = css`
     height: var(--dialog-progress-height);
     background-color: var(--dialog-progress-color);
     transition: var(--dialog-progress-transition);
+  }
+
+  /* ─── Card Footer (スクロール領域の外に固定されるボタン列) ─── */
+
+  .card-footer {
+    width: 100%;
+    flex-shrink: 0;
+    margin-top: 16px;
   }
 
   /* ─── Buttons ─── */
@@ -744,15 +799,91 @@ export const overlayStyles = css`
     letter-spacing: 0.01em;
   }
 
-  /* ─── Steps indicator ─── */
+  /* ─── Steps chrome (card-body の外に常駐するインジケータ) ─── */
 
+  .steps-chrome {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    margin-bottom: 16px;
+  }
+
+  .steps-counter {
+    font-size: 13px;
+    color: var(--dialog-form-hint-color);
+    text-align: center;
+    margin: 0;
+  }
+
+  /* 等幅カラムのリスト。gap を 0 にしているのは、ステップ間の線を
+     .step-item::before で「隣のカラム中心まで」引いているため —
+     gap があるとその分だけ線が届かなくなる。間隔はラベル側の padding で作る。 */
   .steps-header {
     display: flex;
-    align-items: center;
-    gap: 4px;
+    align-items: flex-start;
+    gap: 0;
     width: 100%;
-    justify-content: center;
-    margin-bottom: 8px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .step-item {
+    position: relative;
+    flex: 1 1 0;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+  }
+
+  /* 前のステップの中心から自分の中心まで引く連結線。
+     top はドット (8px) の垂直中心 - 線の太さの半分。 */
+  .step-item:not(:first-child)::before {
+    content: '';
+    position: absolute;
+    top: 3px;
+    right: 50%;
+    left: -50%;
+    height: 2px;
+    background-color: #e5e7eb;
+    transition: background-color 400ms ease;
+  }
+
+  .step-item[data-status='done']::before,
+  .step-item[data-status='active']::before {
+    background-color: var(--dialog-primary);
+  }
+
+  .step-label {
+    font-size: var(--dialog-step-label-size);
+    line-height: 1.3;
+    color: var(--dialog-step-label-color);
+    text-align: center;
+    padding: 0 4px;
+    overflow-wrap: anywhere;
+    transition: color 250ms ease;
+  }
+
+  .step-item[data-status='active'] .step-label {
+    color: var(--dialog-primary);
+    font-weight: 600;
+  }
+
+  .step-item[data-status='done'] .step-label {
+    color: var(--dialog-success);
+  }
+
+  .step-item[data-status='error'] .step-label {
+    color: var(--dialog-error);
+  }
+
+  .step-item[data-status='skipped'] .step-label {
+    color: #9ca3af;
+    text-decoration: line-through;
   }
 
   @keyframes step-dot-enter {
@@ -785,6 +916,11 @@ export const overlayStyles = css`
   }
 
   .step-dot {
+    /* position/z-index は、カラム間を結ぶ ::before の線の上に載せるため。 */
+    position: relative;
+    z-index: 1;
+    display: block;
+    flex: none;
     width: 8px;
     height: 8px;
     border-radius: 50%;
@@ -817,20 +953,11 @@ export const overlayStyles = css`
     background-color: #9ca3af;
   }
 
-  .step-connector {
-    flex: 1;
-    max-width: 24px;
-    height: 2px;
-    background-color: #e5e7eb;
-    transition: background-color 400ms ease;
-  }
-
   /* ─── Form ─── */
 
-  @media (min-width: 640px) {
-    .card[data-type='form'] {
-      width: var(--dialog-form-width);
-    }
+  .card[data-type='form'],
+  .card[data-type='step-form'] {
+    --_card-width: var(--dialog-form-width);
   }
 
   .form-scroll-container {
@@ -960,19 +1087,6 @@ export const overlayStyles = css`
 
   /* ─── Step Form ─── */
 
-  @media (min-width: 640px) {
-    .card[data-type='step-form'] {
-      width: var(--dialog-form-width);
-    }
-  }
-
-  .step-form-counter {
-    font-size: 13px;
-    color: var(--dialog-form-hint-color);
-    text-align: center;
-    margin: 0 0 4px;
-  }
-
   .actions-step-form {
     display: flex;
     flex-direction: row;
@@ -1022,6 +1136,19 @@ export const overlayStyles = css`
     .step-form-nav {
       width: 100%;
       justify-content: flex-end;
+    }
+  }
+
+  /* Keep the spinner rotating (it communicates in-progress state) but cut
+     every decorative enter/exit animation and transition down to ~instant. */
+  @media (prefers-reduced-motion: reduce) {
+    *:not(.spinner):not(.mini-spinner),
+    *:not(.spinner):not(.mini-spinner)::before,
+    *:not(.spinner):not(.mini-spinner)::after {
+      animation-duration: 0.01ms !important;
+      animation-delay: 0ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
     }
   }
 `;
