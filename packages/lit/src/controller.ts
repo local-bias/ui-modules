@@ -29,6 +29,34 @@ function normalizeItemInput(input: TaskItemInput): { key: string; label: string 
   return typeof input === 'string' ? { key: input, label: input } : input;
 }
 
+/**
+ * key はステータス更新の宛先。重複すると `findIndex` が常に先頭を指すので、
+ * 2件目以降は永久に pending のまま取り残される (進捗カウンタも埋まらない)。
+ * 文字列指定は key と label が同じ値になるため、同じラベルを並べると簡単に踏む。
+ */
+function warnDuplicateKeys(kind: 'queue' | 'step', items: { key: string }[]): void {
+  const seen = new Set<string>();
+  const duplicates = new Set<string>();
+  for (const { key } of items) {
+    if (seen.has(key)) duplicates.add(key);
+    seen.add(key);
+  }
+  if (duplicates.size === 0) return;
+  const keys = [...duplicates].map((k) => JSON.stringify(k)).join(', ');
+  console.warn(
+    `[@konomi-app/ui] Duplicate ${kind} key(s): ${keys} — status updates only ever reach ` +
+      'the first match, so later items with the same key stay stuck. ' +
+      'Pass { key, label } objects with unique keys instead.'
+  );
+}
+
+/** 宛先のない更新は黙って捨てず知らせる — 大半は key の打ち間違い。 */
+function warnUnknownKey(kind: 'queue' | 'step', key: string): void {
+  console.warn(
+    `[@konomi-app/ui] No ${kind} item with key ${JSON.stringify(key)} — the call was ignored.`
+  );
+}
+
 type Listener = (state: DialogState) => void;
 type Resolver = (result: DialogResult) => void;
 
@@ -110,9 +138,23 @@ export class DialogController {
     return () => this.#listeners.delete(fn);
   }
 
+  /**
+   * 増やすのは #emit だけ。リスナーの中から #update() が呼ばれた (再入した) ことを
+   * 外側のループが検出するための世代番号。
+   */
+  #emitVersion = 0;
+
   #emit(): void {
+    const version = ++this.#emitVersion;
     const snapshot = { ...this.#state };
-    for (const fn of this.#listeners) fn(snapshot);
+    for (const fn of this.#listeners) {
+      fn(snapshot);
+      // リスナーが同期的に状態を進めた場合、入れ子の #emit が全リスナーに
+      // 新しいスナップショットを配り終えている。ここで続けると、残りのリスナーに
+      // 古い状態を後から被せてしまう (閉→開の再入で「開いているのに未ロック」に
+      // なるなど) ので打ち切る。
+      if (this.#emitVersion !== version) return;
+    }
   }
 
   #update(patch: Partial<DialogState>): void {
@@ -245,9 +287,9 @@ export class DialogController {
   // ─── Queue ───────────────────────────────────────────────
 
   setQueueItems(items: TaskItemInput[]): void {
-    this.#update({
-      queues: items.map<QueueItem>((i) => ({ ...normalizeItemInput(i), status: 'pending' })),
-    });
+    const queues = items.map<QueueItem>((i) => ({ ...normalizeItemInput(i), status: 'pending' }));
+    warnDuplicateKeys('queue', queues);
+    this.#update({ queues });
   }
 
   showQueue(items: TaskItemInput[], title?: string): void {
@@ -260,6 +302,13 @@ export class DialogController {
     this.#update({ title });
   }
 
+  /**
+   * キュー項目を実行中にする。
+   *
+   * `activateStep()` と違い active を1つに絞らない — キューは並列実行を想定していて、
+   * 複数の項目が同時に走ることを許す。「どこまで進んだか」は描画側が
+   * 完了 → 実行中 → 待機 の順に並べ替えて示すので、active が複数あっても読み取れる。
+   */
   activateQueue(key: string): void {
     this.#setQueueStatus(key, 'active');
   }
@@ -288,10 +337,9 @@ export class DialogController {
 
   /** ステップを差し替える。ダイアログの開閉には影響しない。 */
   setStepItems(items: TaskItemInput[]): void {
-    this.#update({
-      steps: items.map<StepItem>((i) => ({ ...normalizeItemInput(i), status: 'pending' })),
-      stepIndex: -1,
-    });
+    const steps = items.map<StepItem>((i) => ({ ...normalizeItemInput(i), status: 'pending' }));
+    warnDuplicateKeys('step', steps);
+    this.#update({ steps, stepIndex: -1 });
   }
 
   /**
@@ -320,7 +368,10 @@ export class DialogController {
    */
   activateStep(key: string): void {
     const idx = this.#state.steps.findIndex((s) => s.key === key);
-    if (idx < 0) return;
+    if (idx < 0) {
+      warnUnknownKey('step', key);
+      return;
+    }
     const steps = this.#state.steps.map<StepItem>((s, i) => {
       if (i === idx) return { ...s, status: 'active' };
       return s.status === 'active' ? { ...s, status: 'pending' } : s;
@@ -358,7 +409,10 @@ export class DialogController {
 
   #setStepStatus(key: string, status: StepItem['status']): void {
     const idx = this.#state.steps.findIndex((s) => s.key === key);
-    if (idx < 0) return;
+    if (idx < 0) {
+      warnUnknownKey('step', key);
+      return;
+    }
     const steps = this.#state.steps.map<StepItem>((s, i) =>
       i === idx ? { ...s, status } : s
     );
@@ -792,7 +846,10 @@ export class DialogController {
 
   #setQueueStatus(itemKey: string, status: QueueItem['status']): void {
     const idx = this.#state.queues.findIndex((i) => i.key === itemKey);
-    if (idx < 0) return;
+    if (idx < 0) {
+      warnUnknownKey('queue', itemKey);
+      return;
+    }
     const queues = this.#state.queues.map<QueueItem>((item, i) =>
       i === idx ? { ...item, status } : item
     );

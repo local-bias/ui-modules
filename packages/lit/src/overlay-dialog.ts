@@ -17,12 +17,31 @@ import { createInitialState } from './types';
 import { overlayStyles } from './styles';
 import { parseDateInputValue, toDateInputValue } from './form-date-utils';
 import { trapTabFocus } from './focus-trap';
+import { acquireScrollLock, releaseScrollLock } from './scroll-lock';
 import { renderAlertIcon, renderSpinner, renderTaskIcon } from './icons';
 import { nextStepIndex, prevStepIndex } from './step-utils';
 
 // ─── Form rendering context ───────────────────────────────────
 // Abstracts data access so form rendering methods stay independent
 // of where the values live.
+
+/**
+ * キューの表示グループ。完了 → 実行中 → 待機 の順に固める。
+ *
+ * キューは並列実行を許すので active は複数ありうる。宣言順のまま出すと、走っている
+ * 項目が待機中の項目に埋もれて進行が読み取れない。段に分けておけば、active が何個
+ * 残っていても「上から順に片付いている」ことがひと目で分かる。
+ *
+ * done/skipped/error は決着済みとして同じ段に置く (進捗カウンタの数え方と揃える)。
+ * 逐次実行なら active より前は必ず決着済みなので、この並べ替えは何もしないのと同じ。
+ */
+const QUEUE_DISPLAY_ORDER: Record<QueueItem['status'], number> = {
+  done: 0,
+  skipped: 0,
+  error: 0,
+  active: 1,
+  pending: 2,
+};
 
 interface FormContext {
   getValue: (key: string) => unknown;
@@ -48,8 +67,12 @@ export class OverlayDialog extends LitElement {
   private _unsubscribe?: () => void;
   private _closeTimer?: ReturnType<typeof setTimeout>;
   private _beforeUnloadHandler = (e: BeforeUnloadEvent) => e.preventDefault();
-  /** Body's overflow value prior to locking, restored when the dialog closes. */
-  private _prevBodyOverflow: string | null = null;
+  /**
+   * Whether *this* element currently holds a share of the global scroll lock.
+   * The saved overflow value lives in `scroll-lock.ts` — it belongs to the page,
+   * not to any one dialog element.
+   */
+  private _holdsScrollLock = false;
   private _unloadGuardActive = false;
   /** Watches the scroll region so its keyboard affordance follows the content size. */
   private _bodyResizeObserver?: ResizeObserver;
@@ -90,12 +113,19 @@ export class OverlayDialog extends LitElement {
         this._lastOpenState = this._state;
         this._previouslyFocused = (document.activeElement as HTMLElement) ?? null;
         this._pendingFocus = true;
+        // subscribe() は即時 emit しないので、既に開いているコントローラーに
+        // 後から繋がった要素 (DOM 移動による再接続を含む) はここで自分でロックを取る。
+        this._syncBodyScroll(true);
       }
       this._syncUnloadGuard(this._state);
       this._unsubscribe = this.controller.subscribe((s) => {
         const wasOpen = this._state.open;
         const prevDialogType = this._state.dialogType;
         const prevIndex = this._state.stepIndex;
+
+        // 先頭で同期する — 後続の _restoreFocus() などが投げても、ロックだけは
+        // 通知どおりの状態に必ず追随させるため。
+        this._syncBodyScroll(s.open);
 
         if (s.open && !wasOpen) {
           this._isClosing = false;
@@ -126,7 +156,6 @@ export class OverlayDialog extends LitElement {
 
         if (s.open) this._lastOpenState = s;
         this._state = s;
-        this._syncBodyScroll(s.open);
       });
     }
   }
@@ -192,15 +221,18 @@ export class OverlayDialog extends LitElement {
     this._syncBodyScrollability();
   }
 
+  /**
+   * この要素ぶんのロックを取り下げ/取り直しする。実際に body を触るかどうかは
+   * 参照カウントを持つ `scroll-lock.ts` の判断。同じ状態への再呼び出しで
+   * カウントがずれないよう、ここで冪等にしておく。
+   */
   private _syncBodyScroll(lock: boolean): void {
+    if (lock === this._holdsScrollLock) return;
+    this._holdsScrollLock = lock;
     if (lock) {
-      if (this._prevBodyOverflow === null) {
-        this._prevBodyOverflow = document.body.style.overflow;
-      }
-      document.body.style.overflow = 'hidden';
-    } else if (this._prevBodyOverflow !== null) {
-      document.body.style.overflow = this._prevBodyOverflow;
-      this._prevBodyOverflow = null;
+      acquireScrollLock();
+    } else {
+      releaseScrollLock();
     }
   }
 
@@ -247,13 +279,30 @@ export class OverlayDialog extends LitElement {
 
   // ─── Render Helpers ──────────────────────────────────────
 
+  /**
+   * 表示順に並べ替える。`state.queues` は呼び出し側が宣言した順序のままにしておきたいので
+   * 破壊せずコピーしてから並べる。`sort` は安定なので、同じ段の中では宣言順が保たれる。
+   */
+  private _sortQueueForDisplay(items: QueueItem[]): QueueItem[] {
+    return [...items].sort(
+      (a, b) => QUEUE_DISPLAY_ORDER[a.status] - QUEUE_DISPLAY_ORDER[b.status]
+    );
+  }
+
+  /** 並べ替え済みの配列を受け取る前提。 */
   private _getQueueWindow(items: QueueItem[]): { start: number; end: number } {
     const total = items.length;
     if (total <= 4) return { start: 0, end: total - 1 };
 
-    // active なら中心に。なければ最後の完了済み+1 (次の pending) を中心とする。
-    let centerIdx = items.findIndex((i) => i.status === 'active');
-    if (centerIdx < 0) {
+    // 並べ替え済みなので active は連続する。窓はそのブロックの中心に置く —
+    // 並列実行で active が複数あっても、走っている項目が窓から外れない。
+    // active がなければ最後の決着済み+1 (次の pending) = 進行の先端を中心とする。
+    const firstActive = items.findIndex((i) => i.status === 'active');
+    let centerIdx: number;
+    if (firstActive >= 0) {
+      const activeCount = items.filter((i) => i.status === 'active').length;
+      centerIdx = firstActive + Math.floor((activeCount - 1) / 2);
+    } else {
       const finishedStatuses = new Set<QueueItem['status']>(['done', 'skipped', 'error']);
       const lastFinishedIdx = items.reduce(
         (acc, item, i) => (finishedStatuses.has(item.status) ? i : acc),
@@ -281,8 +330,9 @@ export class OverlayDialog extends LitElement {
 
   private _renderQueueList(items: QueueItem[]): TemplateResult {
     const total = items.length;
-    const { start, end } = this._getQueueWindow(items);
-    const visible = items.slice(start, end + 1);
+    const ordered = this._sortQueueForDisplay(items);
+    const { start, end } = this._getQueueWindow(ordered);
+    const visible = ordered.slice(start, end + 1);
 
     const finishedStatuses = new Set<QueueItem['status']>(['done', 'skipped', 'error']);
     const doneCount = items.filter((i) => finishedStatuses.has(i.status)).length;
