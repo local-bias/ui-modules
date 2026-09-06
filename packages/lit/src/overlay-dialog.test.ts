@@ -260,6 +260,7 @@ describe('body rendering', () => {
 
   it('windows a long queue around the active item and counts what is hidden', async () => {
     dialog.showQueue(['1', '2', '3', '4', '5', '6', '7', '8']);
+    for (const k of ['1', '2', '3', '4']) dialog.completeQueue(k);
     dialog.activateQueue('5');
     await update();
 
@@ -282,6 +283,72 @@ describe('body rendering', () => {
 
     expect(root.querySelectorAll('.queue-ellipsis')).toHaveLength(1);
     expect(text(root, '.queue-ellipsis-badge')).toBe('+2');
+  });
+
+  // ── 表示順 ─────────────────────────────────────────────────
+  // キューは並列実行を許すので active は複数ありうる。宣言順のまま出すと走っている
+  // 項目が待機中に埋もれるため、描画側で 完了 → 実行中 → 待機 に並べ替える。
+
+  const queueLabels = () =>
+    [...root.querySelectorAll('.task-label')].map((l) => l.textContent!.trim());
+
+  it('完了 → 実行中 → 待機 の順に並べ替えて表示する', async () => {
+    dialog.showQueue(['a', 'b', 'c', 'd']);
+    dialog.activateQueue('c');
+    dialog.completeQueue('d');
+    await update();
+
+    expect(queueLabels()).toEqual(['d', 'c', 'a', 'b']);
+  });
+
+  it('並列に走る複数の active をひとまとまりで見せる', async () => {
+    dialog.showQueue(['a', 'b', 'c', 'd']);
+    dialog.completeQueue('b');
+    dialog.activateQueue('a');
+    dialog.activateQueue('d');
+    await update();
+
+    expect(queueLabels()).toEqual(['b', 'a', 'd', 'c']);
+  });
+
+  it('同じ段の中では宣言順を保つ (安定ソート)', async () => {
+    dialog.showQueue(['a', 'b', 'c', 'd']);
+    dialog.completeQueue('c');
+    dialog.skipQueue('a');
+    await update();
+
+    // a と c はどちらも決着済み — 宣言順どおり a が先
+    expect(queueLabels()).toEqual(['a', 'c', 'b', 'd']);
+  });
+
+  it('逐次実行なら並べ替えは何もしないのと同じ', async () => {
+    dialog.showQueue(['a', 'b', 'c', 'd']);
+    dialog.completeQueue('a');
+    dialog.completeQueue('b');
+    dialog.activateQueue('c');
+    await update();
+
+    expect(queueLabels()).toEqual(['a', 'b', 'c', 'd']);
+  });
+
+  it('並列の active が複数でも窓から外れない', async () => {
+    dialog.showQueue(['1', '2', '3', '4', '5', '6', '7', '8']);
+    for (const k of ['1', '2', '3']) dialog.completeQueue(k);
+    // 4 件を並列で走らせる
+    for (const k of ['4', '5', '6', '7']) dialog.activateQueue(k);
+    await update();
+
+    // active ブロック (index 3-6) の中心 index 4 に窓が寄る。
+    // 窓は 3 件なので active 4 件のうち先頭 3 件が見え、決着済みには埋もれない。
+    expect(queueLabels()).toEqual(['4', '5', '6']);
+  });
+
+  it('active がなければ進行の先端 (次の待機) を中心にする', async () => {
+    dialog.showQueue(['1', '2', '3', '4', '5', '6', '7', '8']);
+    for (const k of ['1', '2', '3', '4']) dialog.completeQueue(k);
+    await update();
+
+    expect(queueLabels()).toEqual(['4', '5', '6']);
   });
 
   it('drives the confirm/cancel buttons through the controller', async () => {
@@ -530,11 +597,17 @@ describe('icons', () => {
     dialog.skipQueue('d');
     await update();
 
-    const icons = [...root.querySelectorAll('.task-icon')];
-    expect(icons).toHaveLength(4);
+    const items = [...root.querySelectorAll('.task-item')];
+    expect(items).toHaveLength(4);
+    // 表示順は状態で変わるのでラベルで引く
+    const byLabel = new Map(
+      items.map((li) => [li.querySelector('.task-label')!.textContent!.trim(), li])
+    );
     // active はスピナー、それ以外は SVG
-    expect(icons[0].querySelector('.mini-spinner')).not.toBeNull();
-    expect(icons.slice(1).every((i) => i.querySelector('svg') !== null)).toBe(true);
+    expect(byLabel.get('a')!.querySelector('.task-icon .mini-spinner')).not.toBeNull();
+    for (const key of ['b', 'c', 'd']) {
+      expect(byLabel.get(key)!.querySelector('.task-icon svg')).not.toBeNull();
+    }
   });
 
   it('renders a pending task icon', async () => {

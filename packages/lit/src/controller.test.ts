@@ -9,6 +9,20 @@ beforeEach(() => {
   dialog = new DialogController();
 });
 
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
+/** console.warn を握り潰しつつ、呼ばれた回数と内容を記録する。 */
+function spyWarn() {
+  return vi.spyOn(console, 'warn').mockImplementation(() => {});
+}
+
+/** `key:status key:status ...` に潰してキューの状態をまとめて検証する。 */
+function queueStatuses(items: { key: string; status: string }[]): string {
+  return items.map((i) => `${i.key}:${i.status}`).join(' ');
+}
+
 // ═══════════════════════════════════════════════════════════════
 // Steps — 常駐クローム
 // ═══════════════════════════════════════════════════════════════
@@ -106,6 +120,7 @@ describe('steps chrome', () => {
   });
 
   it('ignores status changes and activation for unknown keys', () => {
+    const warn = spyWarn();
     dialog.showSteps(['a']);
     dialog.activateStep('a');
 
@@ -114,6 +129,16 @@ describe('steps chrome', () => {
 
     expect(stepStatuses(dialog.state.steps)).toBe('a:active');
     expect(dialog.state.stepIndex).toBe(0);
+    expect(warn).toHaveBeenCalledTimes(2);
+  });
+
+  it('steps の key 重複も警告する', () => {
+    const warn = spyWarn();
+
+    dialog.showSteps(['X', 'X', 'Y']);
+
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0][0]).toContain('"X"');
   });
 
   it('setStepItems replaces the items and resets the position', () => {
@@ -610,12 +635,68 @@ describe('queue', () => {
     expect(dialog.state.queues[1].status).toBe('pending');
   });
 
-  it('ignores unknown keys', () => {
+  it('ignores unknown keys — ただし黙って捨てずに警告する', () => {
+    const warn = spyWarn();
     dialog.showQueue(['a']);
 
     dialog.completeQueue('nope');
+    dialog.activateQueue('nope');
 
     expect(dialog.state.queues[0].status).toBe('pending');
+    expect(warn).toHaveBeenCalledTimes(2);
+    expect(warn.mock.calls[0][0]).toContain('"nope"');
+  });
+
+  it('複数の項目を同時に active にできる (並列実行)', () => {
+    dialog.showQueue(['a', 'b', 'c']);
+
+    dialog.activateQueue('a');
+    dialog.activateQueue('b');
+
+    // キューは並列実行を想定しているので active は絞らない。
+    // ステップ (activateStep) が active を1つに保つのとは対照的。
+    expect(queueStatuses(dialog.state.queues)).toBe('a:active b:active c:pending');
+  });
+
+  it('並列に走らせた項目を個別に決着させられる', () => {
+    dialog.showQueue(['a', 'b', 'c']);
+    dialog.activateQueue('a');
+    dialog.activateQueue('b');
+    dialog.activateQueue('c');
+
+    dialog.completeQueue('b');
+    dialog.failQueue('c');
+
+    expect(queueStatuses(dialog.state.queues)).toBe('a:active b:done c:error');
+  });
+
+  it('state.queues は宣言順のまま — 並べ替えは描画側の仕事', () => {
+    dialog.showQueue(['a', 'b', 'c']);
+
+    dialog.completeQueue('c');
+    dialog.activateQueue('b');
+
+    expect(dialog.state.queues.map((q) => q.key)).toEqual(['a', 'b', 'c']);
+  });
+
+  it('key が重複していると警告する (2件目以降が pending のまま取り残されるため)', () => {
+    const warn = spyWarn();
+
+    dialog.showQueue(['アップロード', 'アップロード', '検証']);
+
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0][0]).toContain('"アップロード"');
+  });
+
+  it('key が一意なら label が重なっても警告しない', () => {
+    const warn = spyWarn();
+
+    dialog.showQueue([
+      { key: 'upload-1', label: 'アップロード' },
+      { key: 'upload-2', label: 'アップロード' },
+    ]);
+
+    expect(warn).not.toHaveBeenCalled();
   });
 
   it('clearQueue empties the list', () => {
@@ -811,6 +892,29 @@ describe('subscribe', () => {
 
     expect(snapshot).not.toBe(first);
     expect((first as { label: string }).label).toBe('a');
+  });
+
+  it('リスナー内から状態を進めたら、残りのリスナーに古い方を配り直さない', () => {
+    // 先に登録したリスナーが同期的に開き直すケース。入れ子の emit が全員に
+    // 新しい状態を配り終えているので、外側のループを続けると後続のリスナーが
+    // 「閉じた」を最後に受け取ってしまい、実際の状態と食い違う。
+    let armed = false;
+    dialog.subscribe((s) => {
+      if (armed && !s.open) {
+        armed = false;
+        dialog.alert('次');
+      }
+    });
+    const seen: boolean[] = [];
+    dialog.subscribe((s) => seen.push(s.open));
+
+    dialog.showLoading();
+    armed = true;
+    dialog.hide();
+
+    expect(dialog.state.open).toBe(true);
+    // 最後に見た状態が実際の状態と一致すること (false で終わらない)
+    expect(seen[seen.length - 1]).toBe(true);
   });
 });
 
